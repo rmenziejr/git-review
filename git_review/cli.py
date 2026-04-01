@@ -1,0 +1,385 @@
+"""CLI entry-point for git-review.
+
+Usage examples
+--------------
+# Single repo – last 7 days (default)
+git-review review --repo owner/repo --token ghp_xxx --openai-key sk-xxx
+
+# All repos for an owner
+git-review review --owner myorg --days 14 --token ghp_xxx --openai-key sk-xxx
+
+# Explicit date range
+git-review review --repo owner/repo --since 2024-01-01 --until 2024-01-31
+
+# Delta shortcut
+git-review review --repo owner/repo --days 30
+
+# Skip LLM, just show the raw tables
+git-review review --repo owner/repo --days 7 --no-summary
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+import click
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+
+from .github_client import GitHubClient
+from .llm_client import LLMClient
+from .models import Commit, Issue, PullRequest, ReviewSummary
+
+console = Console()
+
+
+# ---------------------------------------------------------------------------
+# CLI group
+# ---------------------------------------------------------------------------
+
+@click.group()
+@click.version_option(package_name="git-review")
+def main() -> None:
+    """git-review – summarise GitHub activity with AI."""
+
+
+# ---------------------------------------------------------------------------
+# review command
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.option(
+    "--repo",
+    default=None,
+    envvar="GITREVIEW_REPO",
+    metavar="OWNER/REPO",
+    help="GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--owner",
+    default=None,
+    metavar="OWNER",
+    help="GitHub user or organisation – reviews ALL non-archived repos.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub personal access token (or set GITHUB_TOKEN env var).",
+)
+@click.option(
+    "--since",
+    "since_str",
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Start of the time window (inclusive).",
+)
+@click.option(
+    "--until",
+    "until_str",
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="End of the time window (inclusive, defaults to today).",
+)
+@click.option(
+    "--days",
+    default=7,
+    show_default=True,
+    type=int,
+    help="How many days back to look (used when --since is not set).",
+)
+@click.option(
+    "--author",
+    default=None,
+    help="Filter commits by this GitHub username.",
+)
+@click.option(
+    "--openai-key",
+    envvar="OPENAI_API_KEY",
+    default=None,
+    help="OpenAI API key (or set OPENAI_API_KEY env var).",
+)
+@click.option(
+    "--model",
+    default="gpt-4o-mini",
+    show_default=True,
+    help="LLM model to use for summarisation.",
+)
+@click.option(
+    "--base-url",
+    envvar="OPENAI_BASE_URL",
+    default=None,
+    help="Custom OpenAI-compatible API base URL.",
+)
+@click.option(
+    "--no-summary",
+    is_flag=True,
+    default=False,
+    help="Skip LLM summarisation and only print the data tables.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def review(
+    repo: Optional[str],
+    owner: Optional[str],
+    token: Optional[str],
+    since_str: Optional[str],
+    until_str: Optional[str],
+    days: int,
+    author: Optional[str],
+    openai_key: Optional[str],
+    model: str,
+    base_url: Optional[str],
+    no_summary: bool,
+    verbose: bool,
+) -> None:
+    """Fetch GitHub activity and generate an AI summary.
+
+    Provide either --repo OWNER/REPO for a single repository, or
+    --owner OWNER to review all non-archived repositories for that user
+    or organisation.
+    """
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    # --- Validate target selection ------------------------------------
+    if repo and owner:
+        raise click.UsageError("Provide either --repo or --owner, not both.")
+    if not repo and not owner:
+        raise click.UsageError("Provide one of --repo OWNER/REPO or --owner OWNER.")
+
+    # --- Parse / derive date window -----------------------------------
+    now_utc = datetime.now(tz=timezone.utc).replace(hour=23, minute=59, second=59, microsecond=0)
+
+    if since_str:
+        try:
+            since = datetime.strptime(since_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise click.BadParameter(f"Invalid date '{since_str}'. Use YYYY-MM-DD.", param_hint="--since")
+    else:
+        since = (now_utc - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if until_str:
+        try:
+            until = datetime.strptime(until_str, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+        except ValueError:
+            raise click.BadParameter(f"Invalid date '{until_str}'. Use YYYY-MM-DD.", param_hint="--until")
+    else:
+        until = now_utc
+
+    if since > until:
+        raise click.UsageError("--since must be earlier than --until.")
+
+    # --- Resolve owner + list of repos to scan ------------------------
+    gh = GitHubClient(token=token)
+
+    if repo:
+        parts = repo.split("/", 1)
+        if len(parts) != 2 or not all(parts):
+            raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+        resolved_owner, repo_names = parts[0], [parts[1]]
+    else:
+        resolved_owner = owner  # type: ignore[assignment]
+        with console.status(f"[bold green]Listing repositories for {owner}…"):
+            try:
+                repo_names = gh.list_repos(resolved_owner)
+            except Exception as exc:
+                console.print(f"[red]Error listing repositories:[/red] {exc}")
+                sys.exit(1)
+        if not repo_names:
+            console.print(f"[yellow]No repositories found for {owner}.[/yellow]")
+            return
+
+    # --- Aggregate data across all target repos -----------------------
+    all_repos_mode = len(repo_names) > 1
+    repo_label = "*" if all_repos_mode else repo_names[0]
+    review_data = ReviewSummary(
+        owner=resolved_owner, repo=repo_label, since=since, until=until
+    )
+
+    for repo_name in repo_names:
+        if all_repos_mode:
+            console.print(f"[dim]Scanning {resolved_owner}/{repo_name}…[/dim]")
+
+        with console.status(f"[bold green]Fetching commits for {repo_name}…"):
+            try:
+                review_data.commits += gh.get_commits(
+                    resolved_owner, repo_name, since, until, author=author
+                )
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching issues for {repo_name}…"):
+            try:
+                review_data.issues += gh.get_issues(resolved_owner, repo_name, since, until)
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping issues for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching pull requests for {repo_name}…"):
+            try:
+                review_data.pull_requests += gh.get_pull_requests(
+                    resolved_owner, repo_name, since, until
+                )
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping pull requests for {repo_name}:[/yellow] {exc}")
+
+    # --- Print rich tables ------------------------------------------
+    _print_header(resolved_owner, repo_label, since, until)
+    _print_commits_table(review_data.commits, show_repo=all_repos_mode)
+    _print_issues_table(review_data.issues, show_repo=all_repos_mode)
+    _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
+
+    # --- LLM summarisation ------------------------------------------
+    if no_summary:
+        return
+
+    effective_key = openai_key or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not base_url:
+        console.print(
+            "\n[yellow]⚠  No OpenAI API key found.[/yellow]  "
+            "Pass [bold]--openai-key[/bold] or set [bold]OPENAI_API_KEY[/bold] to enable summarisation.\n"
+        )
+        return
+
+    with console.status("[bold green]Generating AI summary…"):
+        try:
+            llm = LLMClient(api_key=effective_key, model=model, base_url=base_url)
+            summary_text = llm.summarise(review_data)
+        except Exception as exc:
+            console.print(f"[red]Error generating summary:[/red] {exc}")
+            sys.exit(1)
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(summary_text),
+            title="[bold cyan]AI Summary[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pretty-print helpers
+# ---------------------------------------------------------------------------
+
+def _print_header(owner: str, repo: str, since: datetime, until: datetime) -> None:
+    repo_display = f"{owner}/*  (all repos)" if repo == "*" else f"{owner}/{repo}"
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{repo_display}[/bold]  ·  "
+            f"{since.date()} → {until.date()}",
+            title="[bold blue]git-review[/bold blue]",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+
+def _print_commits_table(commits: list[Commit], *, show_repo: bool = False) -> None:
+    if not commits:
+        console.print("[dim]No commits found in this time window.[/dim]\n")
+        return
+
+    table = Table(title=f"Commits ({len(commits)})", show_lines=False)
+    table.add_column("SHA", style="dim", no_wrap=True, width=9)
+    table.add_column("Date", no_wrap=True, width=12)
+    table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Message")
+
+    for c in commits:
+        row = [
+            c.sha[:7],
+            str(c.authored_at.date()),
+            c.author,
+        ]
+        if show_repo:
+            row.append(c.repo)
+        row.append(c.message[:80] + ("…" if len(c.message) > 80 else ""))
+        table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_issues_table(issues: list[Issue], *, show_repo: bool = False) -> None:
+    if not issues:
+        console.print("[dim]No issues found in this time window.[/dim]\n")
+        return
+
+    table = Table(title=f"Issues ({len(issues)})", show_lines=False)
+    table.add_column("#", justify="right", style="dim", width=6)
+    table.add_column("State", width=8)
+    table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Labels")
+
+    state_styles = {"open": "green", "closed": "red"}
+    for i in issues:
+        style = state_styles.get(i.state, "white")
+        row = [
+            str(i.number),
+            f"[{style}]{i.state}[/{style}]",
+            i.author,
+        ]
+        if show_repo:
+            row.append(i.repo)
+        row += [
+            i.title[:80] + ("…" if len(i.title) > 80 else ""),
+            ", ".join(i.labels) or "—",
+        ]
+        table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None:
+    if not prs:
+        console.print("[dim]No pull requests found in this time window.[/dim]\n")
+        return
+
+    table = Table(title=f"Pull Requests ({len(prs)})", show_lines=False)
+    table.add_column("#", justify="right", style="dim", width=6)
+    table.add_column("State", width=8)
+    table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Merged", width=12)
+
+    for pr in prs:
+        merged_str = str(pr.merged_at.date()) if pr.merged_at else "—"
+        state_style = "green" if pr.state == "open" else ("magenta" if pr.merged_at else "red")
+        row = [
+            str(pr.number),
+            f"[{state_style}]{pr.state}[/{state_style}]",
+            pr.author,
+        ]
+        if show_repo:
+            row.append(pr.repo)
+        row += [
+            pr.title[:80] + ("…" if len(pr.title) > 80 else ""),
+            merged_str,
+        ]
+        table.add_row(*row)
+    console.print(table)
+    console.print()

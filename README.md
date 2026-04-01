@@ -26,13 +26,13 @@ generates a concise summary via an LLM (OpenAI or any compatible API).
 ```bash
 git clone https://github.com/rmenziejr/git-review.git
 cd git-review
-pip install .
+uv sync
 ```
 
 ### Development (with test dependencies)
 
 ```bash
-pip install -e ".[dev]"
+uv sync --extra dev
 ```
 
 ---
@@ -138,7 +138,7 @@ print(text)
 ## Running tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ---

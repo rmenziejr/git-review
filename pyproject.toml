@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "git-review"
@@ -28,9 +28,8 @@ dev = [
 [project.scripts]
 git-review = "git_review.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["git_review*"]
+[tool.hatch.build.targets.wheel]
+packages = ["git_review"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

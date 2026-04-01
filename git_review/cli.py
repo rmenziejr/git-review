@@ -575,7 +575,7 @@ def create_issues(
         raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
     owner, repo_name = parts
 
-    effective_key = openai_key or os.environ.get("OPENAI_API_KEY")
+    effective_key = openai_key
     if not effective_key and not base_url:
         raise click.UsageError(
             "An OpenAI API key is required. Pass --openai-key or set OPENAI_API_KEY."

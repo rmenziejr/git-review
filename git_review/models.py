@@ -17,6 +17,8 @@ class Commit:
     authored_at: datetime
     url: str
     repo: str
+    additions: int = 0
+    deletions: int = 0
 
 
 @dataclass

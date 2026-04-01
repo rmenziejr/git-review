@@ -105,6 +105,7 @@ class GitHubClient:
         since: datetime,
         until: datetime,
         author: Optional[str] = None,
+        include_stats: bool = False,
     ) -> list[Commit]:
         """Return commits in *repo* between *since* and *until* (inclusive).
 
@@ -120,6 +121,10 @@ class GitHubClient:
             Upper bound (inclusive).
         author:
             Optional GitHub username to filter commits by.
+        include_stats:
+            When *True*, fetch each commit's detail endpoint to populate
+            ``additions`` and ``deletions``.  This makes one extra API call per
+            commit, so use with awareness of rate limits.
         """
         params: dict[str, Any] = {
             "since": _to_iso(since),
@@ -133,6 +138,13 @@ class GitHubClient:
         for item in raw:
             commit = item.get("commit", {})
             author_info = commit.get("author") or {}
+            stats: dict[str, int] = {}
+            if include_stats:
+                try:
+                    detail = self._get(f"repos/{owner}/{repo}/commits/{item['sha']}")
+                    stats = detail.get("stats", {})
+                except requests.RequestException:
+                    pass
             commits.append(
                 Commit(
                     sha=item["sha"],
@@ -141,6 +153,8 @@ class GitHubClient:
                     authored_at=isoparse(author_info.get("date", "1970-01-01T00:00:00Z")),
                     url=item.get("html_url", ""),
                     repo=f"{owner}/{repo}",
+                    additions=stats.get("additions", 0),
+                    deletions=stats.get("deletions", 0),
                 )
             )
         return commits

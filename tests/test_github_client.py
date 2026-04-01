@@ -67,6 +67,95 @@ def test_get_commits_returns_list() -> None:
     assert commits[0].message == "feat: add login page"
     assert commits[0].author == "Alice"
     assert commits[0].repo == "acme/app"
+    # stats default to 0 when include_stats=False
+    assert commits[0].additions == 0
+    assert commits[0].deletions == 0
+
+
+@responses_lib.activate
+def test_get_commits_with_stats() -> None:
+    payload = [
+        {
+            "sha": "abc1234567890",
+            "commit": {
+                "message": "feat: add login page",
+                "author": {"name": "Alice", "date": "2024-01-10T08:00:00Z"},
+            },
+            "html_url": "https://github.com/acme/app/commit/abc1234567890",
+            "author": {"login": "alice"},
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[],
+        status=200,
+    )
+    # Individual commit detail response with stats
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits/abc1234567890",
+        json={
+            "sha": "abc1234567890",
+            "stats": {"additions": 42, "deletions": 7, "total": 49},
+        },
+        status=200,
+    )
+
+    client = GitHubClient()
+    commits = client.get_commits("acme", "app", SINCE, UNTIL, include_stats=True)
+
+    assert len(commits) == 1
+    assert commits[0].additions == 42
+    assert commits[0].deletions == 7
+
+
+@responses_lib.activate
+def test_get_commits_with_stats_gracefully_handles_error() -> None:
+    """Stats should default to 0 when the individual commit endpoint fails."""
+    payload = [
+        {
+            "sha": "abc1234567890",
+            "commit": {
+                "message": "feat: add login page",
+                "author": {"name": "Alice", "date": "2024-01-10T08:00:00Z"},
+            },
+            "html_url": "https://github.com/acme/app/commit/abc1234567890",
+            "author": {"login": "alice"},
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[],
+        status=200,
+    )
+    # Simulate failure on individual commit endpoint
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits/abc1234567890",
+        json={"message": "Not Found"},
+        status=404,
+    )
+
+    client = GitHubClient()
+    commits = client.get_commits("acme", "app", SINCE, UNTIL, include_stats=True)
+
+    assert len(commits) == 1
+    assert commits[0].additions == 0
+    assert commits[0].deletions == 0
 
 
 @responses_lib.activate

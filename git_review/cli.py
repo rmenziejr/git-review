@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -218,7 +219,8 @@ def review(
         with console.status(f"[bold green]Fetching commits for {repo_name}…"):
             try:
                 review_data.commits += gh.get_commits(
-                    resolved_owner, repo_name, since, until, author=author
+                    resolved_owner, repo_name, since, until, author=author,
+                    include_stats=True,
                 )
             except Exception as exc:
                 console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")
@@ -240,6 +242,7 @@ def review(
     # --- Print rich tables ------------------------------------------
     _print_header(resolved_owner, repo_label, since, until)
     _print_commits_table(review_data.commits, show_repo=all_repos_mode)
+    _print_repo_stats_table(review_data.commits)
     _print_issues_table(review_data.issues, show_repo=all_repos_mode)
     _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
 
@@ -304,6 +307,8 @@ def _print_commits_table(commits: list[Commit], *, show_repo: bool = False) -> N
     if show_repo:
         table.add_column("Repo", no_wrap=True)
     table.add_column("Message")
+    table.add_column("+", style="green", justify="right", no_wrap=True, width=8)
+    table.add_column("-", style="red", justify="right", no_wrap=True, width=8)
 
     for c in commits:
         row = [
@@ -314,7 +319,38 @@ def _print_commits_table(commits: list[Commit], *, show_repo: bool = False) -> N
         if show_repo:
             row.append(c.repo)
         row.append(c.message[:80] + ("…" if len(c.message) > 80 else ""))
+        row.append(f"+{c.additions}" if c.additions else "")
+        row.append(f"-{c.deletions}" if c.deletions else "")
         table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_repo_stats_table(commits: list[Commit]) -> None:
+    if not commits:
+        return
+
+    stats: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"commits": 0, "additions": 0, "deletions": 0}
+    )
+    for c in commits:
+        stats[c.repo]["commits"] += 1
+        stats[c.repo]["additions"] += c.additions
+        stats[c.repo]["deletions"] += c.deletions
+
+    table = Table(title="Repo Stats", show_lines=False)
+    table.add_column("Repo", no_wrap=True)
+    table.add_column("Commits", justify="right", width=9)
+    table.add_column("Additions", style="green", justify="right", width=11)
+    table.add_column("Deletions", style="red", justify="right", width=11)
+
+    for repo_name, data in sorted(stats.items()):
+        table.add_row(
+            repo_name,
+            str(data["commits"]),
+            f"+{data['additions']}",
+            f"-{data['deletions']}",
+        )
     console.print(table)
     console.print()
 

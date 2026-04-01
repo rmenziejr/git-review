@@ -34,8 +34,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .github_client import GitHubClient
+from .issue_factory import IssueFactory, IssueDraft
 from .llm_client import LLMClient
-from .models import Commit, Issue, PullRequest, ReviewSummary
+from .models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
 
 console = Console()
 
@@ -234,10 +235,22 @@ def review(
         with console.status(f"[bold green]Fetching pull requests for {repo_name}…"):
             try:
                 review_data.pull_requests += gh.get_pull_requests(
-                    resolved_owner, repo_name, since, until
+                    resolved_owner, repo_name, since, until, include_details=True
                 )
             except Exception as exc:
                 console.print(f"[yellow]  Skipping pull requests for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching releases for {repo_name}…"):
+            try:
+                review_data.releases += gh.get_releases(resolved_owner, repo_name, since, until)
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping releases for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching contributors for {repo_name}…"):
+            try:
+                review_data.contributors += gh.get_contributors(resolved_owner, repo_name)
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping contributors for {repo_name}:[/yellow] {exc}")
 
     # --- Print rich tables ------------------------------------------
     _print_header(resolved_owner, repo_label, since, until)
@@ -245,6 +258,8 @@ def review(
     _print_repo_stats_table(review_data.commits)
     _print_issues_table(review_data.issues, show_repo=all_repos_mode)
     _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
+    _print_releases_table(review_data.releases, show_repo=all_repos_mode)
+    _print_contributors_table(review_data.contributors, show_repo=all_repos_mode)
 
     # --- LLM summarisation ------------------------------------------
     if no_summary:
@@ -401,10 +416,20 @@ def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None
         table.add_column("Repo", no_wrap=True)
     table.add_column("Title")
     table.add_column("Merged", width=12)
+    table.add_column("Reviewers (comments)", no_wrap=False)
 
     for pr in prs:
         merged_str = str(pr.merged_at.date()) if pr.merged_at else "—"
         state_style = "green" if pr.state == "open" else ("magenta" if pr.merged_at else "red")
+        if pr.reviewer_comments:
+            reviewers_str = ", ".join(
+                f"{login}({count})"
+                for login, count in sorted(
+                    pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
+                )
+            )
+        else:
+            reviewers_str = "—"
         row = [
             str(pr.number),
             f"[{state_style}]{pr.state}[/{state_style}]",
@@ -415,7 +440,233 @@ def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None
         row += [
             pr.title[:80] + ("…" if len(pr.title) > 80 else ""),
             merged_str,
+            reviewers_str,
         ]
         table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_releases_table(releases: list[Release], *, show_repo: bool = False) -> None:
+    if not releases:
+        return
+
+    table = Table(title=f"Releases ({len(releases)})", show_lines=False)
+    table.add_column("Tag", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Author", no_wrap=True)
+    table.add_column("Published", width=12)
+    table.add_column("Pre-release", width=11)
+
+    for r in releases:
+        pub_str = str(r.published_at.date()) if r.published_at else "—"
+        pre_str = "[yellow]yes[/yellow]" if r.prerelease else "no"
+        row = [r.tag]
+        if show_repo:
+            row.append(r.repo)
+        row += [
+            r.name[:60] + ("…" if len(r.name) > 60 else ""),
+            r.author or "—",
+            pub_str,
+            pre_str,
+        ]
+        table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_contributors_table(
+    contributors: list[Contributor], *, show_repo: bool = False
+) -> None:
+    if not contributors:
+        return
+
+    # Aggregate contributions across repos when in all-repos mode
+    agg: dict[str, int] = defaultdict(int)
+    for c in contributors:
+        agg[c.login] += c.contributions
+
+    table = Table(title=f"Contributors ({len(agg)})", show_lines=False)
+    table.add_column("Username", no_wrap=True)
+    table.add_column("Contributions", justify="right", width=14)
+
+    for login, total in sorted(agg.items(), key=lambda x: x[1], reverse=True):
+        table.add_row(login, str(total))
+    console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# create-issues command
+# ---------------------------------------------------------------------------
+
+@main.command("create-issues")
+@click.option(
+    "--repo",
+    required=True,
+    envvar="GITREVIEW_REPO",
+    metavar="OWNER/REPO",
+    help="Target GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--requirements",
+    "requirements_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    metavar="FILE",
+    help="Path to a markdown file containing requirements.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub personal access token (or set GITHUB_TOKEN env var).",
+)
+@click.option(
+    "--openai-key",
+    envvar="OPENAI_API_KEY",
+    default=None,
+    help="OpenAI API key (or set OPENAI_API_KEY env var).",
+)
+@click.option(
+    "--model",
+    default="gpt-4o-mini",
+    show_default=True,
+    help="LLM model to use for issue generation.",
+)
+@click.option(
+    "--base-url",
+    envvar="OPENAI_BASE_URL",
+    default=None,
+    help="Custom OpenAI-compatible API base URL.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip interactive approval and push all issues immediately.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Parse and display issue drafts but do not push to GitHub.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def create_issues(
+    repo: str,
+    requirements_file: str,
+    token: Optional[str],
+    openai_key: Optional[str],
+    model: str,
+    base_url: Optional[str],
+    yes: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Parse a markdown requirements file and create GitHub issues.
+
+    Reads REQUIREMENTS_FILE, uses an LLM to extract individual requirements as
+    issue drafts, lets you review them, then creates them in OWNER/REPO.
+    """
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    parts = repo.split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+    owner, repo_name = parts
+
+    effective_key = openai_key
+    if not effective_key and not base_url:
+        raise click.UsageError(
+            "An OpenAI API key is required. Pass --openai-key or set OPENAI_API_KEY."
+        )
+
+    with open(requirements_file, encoding="utf-8") as fh:
+        markdown_text = fh.read()
+
+    gh = GitHubClient(token=token)
+
+    with console.status("[bold green]Parsing requirements with LLM…"):
+        try:
+            factory = IssueFactory(
+                github_client=gh,
+                openai_api_key=effective_key,
+                model=model,
+                base_url=base_url,
+            )
+            drafts = factory.parse_requirements(markdown_text)
+        except Exception as exc:
+            console.print(f"[red]Error parsing requirements:[/red] {exc}")
+            sys.exit(1)
+
+    if not drafts:
+        console.print("[yellow]No issues were extracted from the requirements document.[/yellow]")
+        return
+
+    _print_issue_drafts(drafts)
+
+    if dry_run:
+        console.print("[dim]Dry-run mode – no issues were created.[/dim]")
+        return
+
+    approved: list[IssueDraft] = []
+    if yes:
+        approved = drafts
+    else:
+        console.print()
+        for i, draft in enumerate(drafts, 1):
+            answer = click.prompt(
+                f"  Push issue {i}/{len(drafts)} '{draft.title}'? [y/n/q]",
+                default="y",
+            )
+            if answer.lower() == "q":
+                console.print("[yellow]Aborted.[/yellow]")
+                break
+            if answer.lower() == "y":
+                approved.append(draft)
+
+    if not approved:
+        console.print("[dim]No issues were pushed.[/dim]")
+        return
+
+    with console.status(f"[bold green]Creating {len(approved)} issue(s) in {owner}/{repo_name}…"):
+        try:
+            results = factory.push_issues(owner, repo_name, approved)
+        except Exception as exc:
+            console.print(f"[red]Error creating issues:[/red] {exc}")
+            sys.exit(1)
+
+    console.print(f"\n[green]✓ Created {len(results)} issue(s):[/green]")
+    for r in results:
+        console.print(f"  #{r.get('number')}  {r.get('html_url', '')}")
+
+
+def _print_issue_drafts(drafts: list) -> None:
+    """Display a summary table of issue drafts."""
+    table = Table(title=f"Issue Drafts ({len(drafts)})", show_lines=True)
+    table.add_column("#", justify="right", style="dim", width=4)
+    table.add_column("Title")
+    table.add_column("Labels")
+    table.add_column("Assignees")
+
+    for i, draft in enumerate(drafts, 1):
+        table.add_row(
+            str(i),
+            draft.title,
+            ", ".join(draft.labels) or "—",
+            ", ".join(draft.assignees) or "—",
+        )
+    console.print()
     console.print(table)
     console.print()

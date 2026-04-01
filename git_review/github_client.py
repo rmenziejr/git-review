@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 import requests
 from dateutil.parser import isoparse
 
-from .models import Commit, Issue, PullRequest
+from .models import Commit, Contributor, Issue, PullRequest, Release
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,13 @@ class GitHubClient:
                 break
             page += 1
         return results
+
+    def _post(self, path: str, json: Any) -> Any:
+        """POST *json* to *path* and return the parsed response JSON."""
+        url = urljoin(self._base_url, path.lstrip("/"))
+        response = self._session.post(url, json=json)
+        response.raise_for_status()
+        return response.json()
 
     # ------------------------------------------------------------------
     # Public API
@@ -210,6 +217,10 @@ class GitHubClient:
                     repo=f"{owner}/{repo}",
                     labels=[label.get("name", "") for label in item.get("labels", [])],
                     body=item.get("body") or "",
+                    comments=item.get("comments", 0),
+                    assignees=[
+                        (a.get("login") or "") for a in item.get("assignees", []) if a
+                    ],
                 )
             )
         return issues
@@ -221,6 +232,7 @@ class GitHubClient:
         since: datetime,
         until: datetime,
         state: str = "all",
+        include_details: bool = False,
     ) -> list[PullRequest]:
         """Return pull requests whose *updated_at* falls within [since, until].
 
@@ -234,6 +246,11 @@ class GitHubClient:
             Upper bound.
         state:
             ``"open"``, ``"closed"``, or ``"all"`` (default).
+        include_details:
+            When *True*, fetch each PR's detail endpoint to populate
+            ``additions``, ``deletions``, ``changed_files``, ``commits_count``,
+            ``review_comments``, and ``reviewer_comments`` (per-reviewer comment
+            counts).  This makes two extra API calls per PR.
         """
         raw = self._paginate(
             f"repos/{owner}/{repo}/pulls",
@@ -251,6 +268,34 @@ class GitHubClient:
             if updated_aware < since_aware or updated_aware > until_aware:
                 continue
             merged_at_str = item.get("merged_at")
+
+            additions = 0
+            deletions = 0
+            changed_files = 0
+            commits_count = 0
+            review_comments = 0
+            reviewer_comments: dict[str, int] = {}
+            if include_details:
+                try:
+                    detail = self._get(f"repos/{owner}/{repo}/pulls/{item['number']}")
+                    additions = detail.get("additions", 0)
+                    deletions = detail.get("deletions", 0)
+                    changed_files = detail.get("changed_files", 0)
+                    commits_count = detail.get("commits", 0)
+                    review_comments = detail.get("review_comments", 0)
+                except requests.RequestException:
+                    pass
+                try:
+                    raw_review_comments = self._paginate(
+                        f"repos/{owner}/{repo}/pulls/{item['number']}/review_comments"
+                    )
+                    for rc in raw_review_comments:
+                        login = (rc.get("user") or {}).get("login", "")
+                        if login:
+                            reviewer_comments[login] = reviewer_comments.get(login, 0) + 1
+                except requests.RequestException:
+                    pass
+
             prs.append(
                 PullRequest(
                     number=item["number"],
@@ -263,9 +308,125 @@ class GitHubClient:
                     repo=f"{owner}/{repo}",
                     labels=[label.get("name", "") for label in item.get("labels", [])],
                     body=item.get("body") or "",
+                    draft=item.get("draft", False),
+                    base_branch=(item.get("base") or {}).get("ref", ""),
+                    head_branch=(item.get("head") or {}).get("ref", ""),
+                    requested_reviewers=[
+                        (r.get("login") or "") for r in item.get("requested_reviewers", []) if r
+                    ],
+                    additions=additions,
+                    deletions=deletions,
+                    changed_files=changed_files,
+                    commits_count=commits_count,
+                    review_comments=review_comments,
+                    reviewer_comments=reviewer_comments,
                 )
             )
         return prs
+
+    def get_releases(
+        self,
+        owner: str,
+        repo: str,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+    ) -> list[Release]:
+        """Return releases for *repo*, optionally filtered to [since, until].
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        since:
+            When provided, excludes releases published before this datetime.
+        until:
+            When provided, excludes releases published after this datetime.
+        """
+        raw = self._paginate(f"repos/{owner}/{repo}/releases")
+        releases: list[Release] = []
+        since_aware = _ensure_utc(since) if since else None
+        until_aware = _ensure_utc(until) if until else None
+        for item in raw:
+            published_at_str = item.get("published_at")
+            created_at_str = item.get("created_at", "1970-01-01T00:00:00Z")
+            published_at = isoparse(published_at_str) if published_at_str else None
+            if since_aware or until_aware:
+                ref_dt = _ensure_utc(published_at) if published_at else _ensure_utc(isoparse(created_at_str))
+                if since_aware and ref_dt < since_aware:
+                    continue
+                if until_aware and ref_dt > until_aware:
+                    continue
+            releases.append(
+                Release(
+                    tag=item.get("tag_name", ""),
+                    name=item.get("name") or item.get("tag_name", ""),
+                    body=item.get("body") or "",
+                    created_at=isoparse(created_at_str),
+                    published_at=published_at,
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                    author=(item.get("author") or {}).get("login", ""),
+                    prerelease=item.get("prerelease", False),
+                    draft=item.get("draft", False),
+                )
+            )
+        return releases
+
+    def get_contributors(
+        self,
+        owner: str,
+        repo: str,
+    ) -> list[Contributor]:
+        """Return contributors for *repo* sorted by contribution count descending.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        """
+        raw = self._paginate(f"repos/{owner}/{repo}/contributors", anon="false")
+        contributors: list[Contributor] = []
+        for item in raw:
+            contributors.append(
+                Contributor(
+                    login=item.get("login", ""),
+                    contributions=item.get("contributions", 0),
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                )
+            )
+        return contributors
+
+    def create_issue(
+        self,
+        owner: str,
+        repo: str,
+        title: str,
+        body: str = "",
+        labels: Optional[list[str]] = None,
+        assignees: Optional[list[str]] = None,
+    ) -> dict:
+        """Create a new issue in *repo* and return the raw API response.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        title:
+            Issue title.
+        body:
+            Issue body (markdown supported).
+        labels:
+            Optional list of label names to apply.
+        assignees:
+            Optional list of GitHub usernames to assign.
+        """
+        payload: dict[str, Any] = {"title": title, "body": body}
+        if labels:
+            payload["labels"] = labels
+        if assignees:
+            payload["assignees"] = assignees
+        return self._post(f"repos/{owner}/{repo}/issues", json=payload)
 
 
 # ------------------------------------------------------------------

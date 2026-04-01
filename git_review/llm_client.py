@@ -79,7 +79,18 @@ def _build_user_message(summary: ReviewSummary) -> str:
     for pr in summary.pull_requests:
         merged = "merged" if pr.merged_at else pr.state
         draft_str = " [DRAFT]" if pr.draft else ""
-        lines.append(f"- #{pr.number} [{merged}]{draft_str} {pr.title}  (by {pr.author})")
+        if pr.reviewer_comments:
+            reviewer_str = "; reviewers: " + ", ".join(
+                f"{login}({count} comment{'s' if count != 1 else ''})"
+                for login, count in sorted(
+                    pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
+                )
+            )
+        else:
+            reviewer_str = ""
+        lines.append(
+            f"- #{pr.number} [{merged}]{draft_str} {pr.title}  (by {pr.author}{reviewer_str})"
+        )
 
     lines.append("")
     lines.append(f"### Releases ({len(summary.releases)})")

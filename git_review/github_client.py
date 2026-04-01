@@ -249,7 +249,8 @@ class GitHubClient:
         include_details:
             When *True*, fetch each PR's detail endpoint to populate
             ``additions``, ``deletions``, ``changed_files``, ``commits_count``,
-            and ``review_comments``.  This makes one extra API call per PR.
+            ``review_comments``, and ``reviewer_comments`` (per-reviewer comment
+            counts).  This makes two extra API calls per PR.
         """
         raw = self._paginate(
             f"repos/{owner}/{repo}/pulls",
@@ -273,6 +274,7 @@ class GitHubClient:
             changed_files = 0
             commits_count = 0
             review_comments = 0
+            reviewer_comments: dict[str, int] = {}
             if include_details:
                 try:
                     detail = self._get(f"repos/{owner}/{repo}/pulls/{item['number']}")
@@ -281,6 +283,16 @@ class GitHubClient:
                     changed_files = detail.get("changed_files", 0)
                     commits_count = detail.get("commits", 0)
                     review_comments = detail.get("review_comments", 0)
+                except requests.RequestException:
+                    pass
+                try:
+                    raw_review_comments = self._paginate(
+                        f"repos/{owner}/{repo}/pulls/{item['number']}/review_comments"
+                    )
+                    for rc in raw_review_comments:
+                        login = (rc.get("user") or {}).get("login", "")
+                        if login:
+                            reviewer_comments[login] = reviewer_comments.get(login, 0) + 1
                 except requests.RequestException:
                     pass
 
@@ -307,6 +319,7 @@ class GitHubClient:
                     changed_files=changed_files,
                     commits_count=commits_count,
                     review_comments=review_comments,
+                    reviewer_comments=reviewer_comments,
                 )
             )
         return prs

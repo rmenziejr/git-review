@@ -235,7 +235,7 @@ def review(
         with console.status(f"[bold green]Fetching pull requests for {repo_name}…"):
             try:
                 review_data.pull_requests += gh.get_pull_requests(
-                    resolved_owner, repo_name, since, until
+                    resolved_owner, repo_name, since, until, include_details=True
                 )
             except Exception as exc:
                 console.print(f"[yellow]  Skipping pull requests for {repo_name}:[/yellow] {exc}")
@@ -416,10 +416,20 @@ def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None
         table.add_column("Repo", no_wrap=True)
     table.add_column("Title")
     table.add_column("Merged", width=12)
+    table.add_column("Reviewers (comments)", no_wrap=False)
 
     for pr in prs:
         merged_str = str(pr.merged_at.date()) if pr.merged_at else "—"
         state_style = "green" if pr.state == "open" else ("magenta" if pr.merged_at else "red")
+        if pr.reviewer_comments:
+            reviewers_str = ", ".join(
+                f"{login}({count})"
+                for login, count in sorted(
+                    pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
+                )
+            )
+        else:
+            reviewers_str = "—"
         row = [
             str(pr.number),
             f"[{state_style}]{pr.state}[/{state_style}]",
@@ -430,6 +440,7 @@ def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None
         row += [
             pr.title[:80] + ("…" if len(pr.title) > 80 else ""),
             merged_str,
+            reviewers_str,
         ]
         table.add_row(*row)
     console.print(table)

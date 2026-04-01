@@ -49,7 +49,7 @@ def _fake_issues():
     ]
 
 
-def _fake_prs():
+def _fake_prs(reviewer_comments=None):
     return [
         PullRequest(
             number=7,
@@ -60,6 +60,7 @@ def _fake_prs():
             merged_at=datetime(2024, 1, 8, tzinfo=timezone.utc),
             url="https://github.com/acme/app/pull/7",
             repo="acme/app",
+            reviewer_comments=reviewer_comments or {},
         )
     ]
 
@@ -428,6 +429,31 @@ def test_review_no_releases_no_table() -> None:
         )
     assert result.exit_code == 0, result.output
     assert "Releases" not in result.output
+
+
+def test_review_prs_table_shows_reviewer_comments() -> None:
+    runner = CliRunner()
+    prs = _fake_prs(reviewer_comments={"alice": 3, "bob": 1})
+    with _patch_github([], [], prs):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "alice(3)" in result.output
+    assert "bob(1)" in result.output
+
+
+def test_review_prs_table_no_reviewer_comments_shows_dash() -> None:
+    runner = CliRunner()
+    prs = _fake_prs(reviewer_comments={})
+    with _patch_github([], [], prs):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Pull Requests" in result.output
 
 
 # ---------------------------------------------------------------------------

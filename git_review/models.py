@@ -62,6 +62,7 @@ class PullRequest:
     base_branch: str = ""
     head_branch: str = ""
     requested_reviewers: list[str] = field(default_factory=list)
+    reviewer_comments: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

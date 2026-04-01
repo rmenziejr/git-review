@@ -53,6 +53,7 @@ def _make_summary() -> ReviewSummary:
                 merged_at=datetime(2024, 1, 15, tzinfo=timezone.utc),
                 url="https://github.com/acme/app/pull/10",
                 repo="acme/app",
+                reviewer_comments={"alice": 2, "bob": 1},
             )
         ],
     )
@@ -72,6 +73,9 @@ def test_build_user_message_contains_key_info() -> None:
     assert "Add dark mode" in msg
     assert "2024-01-01" in msg
     assert "2024-01-31" in msg
+    # Reviewer comment info should be included
+    assert "alice" in msg
+    assert "2 comment" in msg
 
 
 # ---------------------------------------------------------------------------

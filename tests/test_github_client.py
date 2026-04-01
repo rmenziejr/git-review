@@ -514,6 +514,13 @@ def test_get_pull_requests_with_details() -> None:
         },
         status=200,
     )
+    # Empty review comments list for this test
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/15/review_comments",
+        json=[],
+        status=200,
+    )
 
     client = GitHubClient()
     prs = client.get_pull_requests("acme", "app", SINCE, UNTIL, include_details=True)
@@ -524,6 +531,108 @@ def test_get_pull_requests_with_details() -> None:
     assert prs[0].changed_files == 8
     assert prs[0].commits_count == 5
     assert prs[0].review_comments == 4
+
+
+@responses_lib.activate
+def test_get_pull_requests_with_details_reviewer_comments() -> None:
+    pr_item = {
+        "number": 20,
+        "title": "Add caching",
+        "state": "closed",
+        "user": {"login": "dave"},
+        "created_at": "2024-01-08T00:00:00Z",
+        "updated_at": "2024-01-12T00:00:00Z",
+        "merged_at": "2024-01-12T00:00:00Z",
+        "html_url": "https://github.com/acme/app/pull/20",
+        "labels": [],
+        "body": "",
+        "draft": False,
+        "base": {"ref": "main"},
+        "head": {"ref": "feature/caching"},
+        "requested_reviewers": [],
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[pr_item],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/20",
+        json={"number": 20, "additions": 0, "deletions": 0,
+              "changed_files": 1, "commits": 1, "review_comments": 3},
+        status=200,
+    )
+    # Three review comments: alice × 2, bob × 1
+    review_comments_payload = [
+        {"user": {"login": "alice"}, "body": "LGTM"},
+        {"user": {"login": "bob"}, "body": "Nit"},
+        {"user": {"login": "alice"}, "body": "Please add test"},
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/20/review_comments",
+        json=review_comments_payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/20/review_comments",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    prs = client.get_pull_requests("acme", "app", SINCE, UNTIL, include_details=True)
+
+    assert len(prs) == 1
+    assert prs[0].reviewer_comments == {"alice": 2, "bob": 1}
+
+
+@responses_lib.activate
+def test_get_pull_requests_reviewer_comments_default_empty() -> None:
+    """reviewer_comments defaults to empty dict when include_details=False."""
+    pr_item = {
+        "number": 5,
+        "title": "Quick fix",
+        "state": "open",
+        "user": {"login": "eve"},
+        "created_at": "2024-01-05T00:00:00Z",
+        "updated_at": "2024-01-06T00:00:00Z",
+        "merged_at": None,
+        "html_url": "https://github.com/acme/app/pull/5",
+        "labels": [],
+        "body": "",
+        "draft": False,
+        "base": {"ref": "main"},
+        "head": {"ref": "fix/typo"},
+        "requested_reviewers": [],
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[pr_item],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    prs = client.get_pull_requests("acme", "app", SINCE, UNTIL)
+
+    assert len(prs) == 1
+    assert prs[0].reviewer_comments == {}
 
 
 # ---------------------------------------------------------------------------

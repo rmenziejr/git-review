@@ -35,6 +35,8 @@ class Issue:
     repo: str
     labels: list[str] = field(default_factory=list)
     body: str = ""
+    comments: int = 0
+    assignees: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -51,6 +53,41 @@ class PullRequest:
     repo: str
     labels: list[str] = field(default_factory=list)
     body: str = ""
+    review_comments: int = 0
+    commits_count: int = 0
+    additions: int = 0
+    deletions: int = 0
+    changed_files: int = 0
+    draft: bool = False
+    base_branch: str = ""
+    head_branch: str = ""
+    requested_reviewers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Release:
+    """A GitHub repository release."""
+
+    tag: str
+    name: str
+    body: str
+    created_at: datetime
+    published_at: Optional[datetime]
+    url: str
+    repo: str
+    author: str = ""
+    prerelease: bool = False
+    draft: bool = False
+
+
+@dataclass
+class Contributor:
+    """A contributor to a GitHub repository."""
+
+    login: str
+    contributions: int
+    url: str
+    repo: str
 
 
 @dataclass
@@ -64,4 +101,6 @@ class ReviewSummary:
     commits: list[Commit] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
     pull_requests: list[PullRequest] = field(default_factory=list)
+    releases: list[Release] = field(default_factory=list)
+    contributors: list[Contributor] = field(default_factory=list)
     summary_text: str = ""

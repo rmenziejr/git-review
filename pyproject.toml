@@ -15,6 +15,7 @@ dependencies = [
     "openai>=1.14",
     "rich>=13.7",
     "python-dateutil>=2.9",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]

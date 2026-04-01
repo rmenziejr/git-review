@@ -22,9 +22,9 @@ _DEFAULT_MODEL = "gpt-4o-mini"
 
 _SYSTEM_PROMPT = """\
 You are a concise engineering manager summarising GitHub activity.
-Given a structured list of commits, issues, and pull requests from a
-repository over a specific time window, produce a clear and well-organised
-plain-text summary.
+Given a structured list of commits, issues, pull requests, releases, and
+contributors from a repository over a specific time window, produce a clear and
+well-organised plain-text summary.
 
 Format your response with the following sections (omit a section if there
 is nothing to report):
@@ -40,6 +40,12 @@ Key issues opened or closed during the period.
 
 ## Pull Requests ({n})
 Notable pull requests and their current status.
+
+## Releases
+Releases published during the period.
+
+## Contributors
+Top contributors by activity.
 
 Be factual, professional, and concise.  Do not invent information.
 """
@@ -72,7 +78,20 @@ def _build_user_message(summary: ReviewSummary) -> str:
     lines.append(f"### Pull Requests ({len(summary.pull_requests)})")
     for pr in summary.pull_requests:
         merged = "merged" if pr.merged_at else pr.state
-        lines.append(f"- #{pr.number} [{merged}] {pr.title}  (by {pr.author})")
+        draft_str = " [DRAFT]" if pr.draft else ""
+        lines.append(f"- #{pr.number} [{merged}]{draft_str} {pr.title}  (by {pr.author})")
+
+    lines.append("")
+    lines.append(f"### Releases ({len(summary.releases)})")
+    for r in summary.releases:
+        pub_str = str(r.published_at.date()) if r.published_at else "unpublished"
+        pre_str = " [pre-release]" if r.prerelease else ""
+        lines.append(f"- {r.tag}{pre_str}: {r.name}  (published {pub_str} by {r.author or 'unknown'})")
+
+    lines.append("")
+    lines.append(f"### Contributors ({len(summary.contributors)})")
+    for c in summary.contributors:
+        lines.append(f"- {c.login}: {c.contributions} contributions")
 
     return "\n".join(lines)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from git_review.cli import main
-from git_review.models import Commit, Issue, PullRequest, ReviewSummary
+from git_review.models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
 
 OWNER = "acme"
 REPO = "app"
@@ -42,6 +44,7 @@ def _fake_issues():
             url="https://github.com/acme/app/issues/42",
             repo="acme/app",
             labels=["bug"],
+            comments=2,
         )
     ]
 
@@ -61,12 +64,41 @@ def _fake_prs():
     ]
 
 
-def _patch_github(commits=None, issues=None, prs=None, repos=None):
+def _fake_releases():
+    return [
+        Release(
+            tag="v1.0.0",
+            name="Version 1.0.0",
+            body="First release",
+            created_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
+            published_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/releases/tag/v1.0.0",
+            repo="acme/app",
+            author="alice",
+        )
+    ]
+
+
+def _fake_contributors():
+    return [
+        Contributor(
+            login="alice",
+            contributions=50,
+            url="https://github.com/alice",
+            repo="acme/app",
+        )
+    ]
+
+
+def _patch_github(commits=None, issues=None, prs=None, repos=None,
+                  releases=None, contributors=None):
     mock_gh = MagicMock()
     mock_gh.return_value.get_commits.return_value = commits or []
     mock_gh.return_value.get_issues.return_value = issues or []
     mock_gh.return_value.get_pull_requests.return_value = prs or []
     mock_gh.return_value.list_repos.return_value = repos or []
+    mock_gh.return_value.get_releases.return_value = releases or []
+    mock_gh.return_value.get_contributors.return_value = contributors or []
     return patch("git_review.cli.GitHubClient", mock_gh)
 
 
@@ -357,4 +389,184 @@ def test_review_repo_stats_not_shown_when_no_commits() -> None:
         )
     assert result.exit_code == 0, result.output
     assert "Repo Stats" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Releases and Contributors tables
+# ---------------------------------------------------------------------------
+
+def test_review_shows_releases_table() -> None:
+    runner = CliRunner()
+    with _patch_github([], [], [], releases=_fake_releases()):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Releases" in result.output
+    assert "v1.0.0" in result.output
+
+
+def test_review_shows_contributors_table() -> None:
+    runner = CliRunner()
+    with _patch_github([], [], [], contributors=_fake_contributors()):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Contributors" in result.output
+    assert "alice" in result.output
+
+
+def test_review_no_releases_no_table() -> None:
+    runner = CliRunner()
+    with _patch_github([], [], [], releases=[]):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Releases" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# create-issues command
+# ---------------------------------------------------------------------------
+
+def _make_requirements_file(content: str) -> str:
+    """Write *content* to a temp file and return its path."""
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    )
+    f.write(content)
+    f.flush()
+    f.close()
+    return f.name
+
+
+def test_create_issues_dry_run_shows_drafts() -> None:
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    tmp = _make_requirements_file("# Requirements\n- Add OAuth\n- Fix crash")
+
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Add OAuth login", body="OAuth body", labels=["enhancement"]),
+        IssueDraft(title="Fix crash on startup", body="Crash body", labels=["bug"]),
+    ]
+
+    with _patch_github():
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--requirements", tmp,
+                    "--openai-key", "sk-fake",
+                    "--dry-run",
+                ],
+            )
+
+    os.unlink(tmp)
+    assert result.exit_code == 0, result.output
+    assert "Add OAuth login" in result.output
+    assert "Fix crash on startup" in result.output
+    assert "Dry-run" in result.output
+
+
+def test_create_issues_yes_flag_pushes_all() -> None:
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    tmp = _make_requirements_file("# Requirements\n- Feature A")
+
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Implement Feature A", body="Body A"),
+    ]
+    mock_factory_cls.return_value.push_issues.return_value = [
+        {"number": 1, "html_url": "https://github.com/acme/app/issues/1"},
+    ]
+
+    with _patch_github():
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--requirements", tmp,
+                    "--openai-key", "sk-fake",
+                    "--yes",
+                ],
+            )
+
+    os.unlink(tmp)
+    assert result.exit_code == 0, result.output
+    assert "Created 1 issue" in result.output
+    assert "#1" in result.output
+    mock_factory_cls.return_value.push_issues.assert_called_once()
+
+
+def test_create_issues_missing_openai_key_errors() -> None:
+    runner = CliRunner()
+    tmp = _make_requirements_file("# Requirements\n- Feature A")
+
+    result = runner.invoke(
+        main,
+        [
+            "create-issues",
+            "--repo", "acme/app",
+            "--requirements", tmp,
+        ],
+        env={"OPENAI_API_KEY": ""},
+    )
+
+    os.unlink(tmp)
+    assert result.exit_code != 0
+
+
+def test_create_issues_bad_repo_format_errors() -> None:
+    runner = CliRunner()
+    tmp = _make_requirements_file("# Requirements")
+
+    result = runner.invoke(
+        main,
+        [
+            "create-issues",
+            "--repo", "not-valid",
+            "--requirements", tmp,
+            "--openai-key", "sk-fake",
+        ],
+    )
+
+    os.unlink(tmp)
+    assert result.exit_code != 0
+
+
+def test_create_issues_no_drafts_returned_exits_cleanly() -> None:
+    runner = CliRunner()
+    tmp = _make_requirements_file("# Requirements")
+
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = []
+
+    with _patch_github():
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--requirements", tmp,
+                    "--openai-key", "sk-fake",
+                ],
+            )
+
+    os.unlink(tmp)
+    assert result.exit_code == 0
+    assert "No issues were extracted" in result.output
 

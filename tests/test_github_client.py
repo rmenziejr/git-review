@@ -381,3 +381,305 @@ def test_list_repos_excludes_archived() -> None:
 
     assert "deprecated" not in repos
     assert "active" in repos
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.get_issues – enriched fields
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_get_issues_populates_comments_and_assignees() -> None:
+    payload = [
+        {
+            "number": 5,
+            "title": "Performance issue",
+            "state": "open",
+            "user": {"login": "carol"},
+            "created_at": "2024-01-10T09:00:00Z",
+            "updated_at": "2024-01-11T09:00:00Z",
+            "closed_at": None,
+            "html_url": "https://github.com/acme/app/issues/5",
+            "labels": [],
+            "body": "It's slow",
+            "comments": 3,
+            "assignees": [{"login": "dave"}, {"login": "eve"}],
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/issues",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/issues",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    issues = client.get_issues("acme", "app", SINCE, UNTIL)
+
+    assert len(issues) == 1
+    assert issues[0].comments == 3
+    assert issues[0].assignees == ["dave", "eve"]
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.get_pull_requests – enriched fields
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_get_pull_requests_populates_new_fields() -> None:
+    pr_item = {
+        "number": 15,
+        "title": "Add dark mode",
+        "state": "open",
+        "user": {"login": "carol"},
+        "created_at": "2024-01-05T00:00:00Z",
+        "updated_at": "2024-01-15T00:00:00Z",
+        "merged_at": None,
+        "html_url": "https://github.com/acme/app/pull/15",
+        "labels": [],
+        "body": "",
+        "draft": True,
+        "base": {"ref": "main"},
+        "head": {"ref": "feature/dark-mode"},
+        "requested_reviewers": [{"login": "alice"}, {"login": "bob"}],
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[pr_item],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    prs = client.get_pull_requests("acme", "app", SINCE, UNTIL)
+
+    assert len(prs) == 1
+    assert prs[0].draft is True
+    assert prs[0].base_branch == "main"
+    assert prs[0].head_branch == "feature/dark-mode"
+    assert prs[0].requested_reviewers == ["alice", "bob"]
+
+
+@responses_lib.activate
+def test_get_pull_requests_with_details() -> None:
+    pr_item = {
+        "number": 15,
+        "title": "Refactor auth",
+        "state": "closed",
+        "user": {"login": "alice"},
+        "created_at": "2024-01-05T00:00:00Z",
+        "updated_at": "2024-01-10T00:00:00Z",
+        "merged_at": "2024-01-10T00:00:00Z",
+        "html_url": "https://github.com/acme/app/pull/15",
+        "labels": [],
+        "body": "",
+        "draft": False,
+        "base": {"ref": "main"},
+        "head": {"ref": "refactor/auth"},
+        "requested_reviewers": [],
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[pr_item],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls",
+        json=[],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/15",
+        json={
+            "number": 15,
+            "additions": 120,
+            "deletions": 30,
+            "changed_files": 8,
+            "commits": 5,
+            "review_comments": 4,
+        },
+        status=200,
+    )
+
+    client = GitHubClient()
+    prs = client.get_pull_requests("acme", "app", SINCE, UNTIL, include_details=True)
+
+    assert len(prs) == 1
+    assert prs[0].additions == 120
+    assert prs[0].deletions == 30
+    assert prs[0].changed_files == 8
+    assert prs[0].commits_count == 5
+    assert prs[0].review_comments == 4
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.get_releases
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_get_releases_returns_list() -> None:
+    payload = [
+        {
+            "tag_name": "v1.2.0",
+            "name": "Version 1.2.0",
+            "body": "Bug fixes and improvements",
+            "created_at": "2024-01-20T10:00:00Z",
+            "published_at": "2024-01-20T12:00:00Z",
+            "html_url": "https://github.com/acme/app/releases/tag/v1.2.0",
+            "author": {"login": "alice"},
+            "prerelease": False,
+            "draft": False,
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/releases",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/releases",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    releases = client.get_releases("acme", "app")
+
+    assert len(releases) == 1
+    assert releases[0].tag == "v1.2.0"
+    assert releases[0].name == "Version 1.2.0"
+    assert releases[0].author == "alice"
+    assert releases[0].prerelease is False
+    assert releases[0].repo == "acme/app"
+
+
+@responses_lib.activate
+def test_get_releases_filters_by_date() -> None:
+    old_release = {
+        "tag_name": "v0.9.0",
+        "name": "Old release",
+        "body": "",
+        "created_at": "2023-06-01T10:00:00Z",
+        "published_at": "2023-06-01T10:00:00Z",
+        "html_url": "https://github.com/acme/app/releases/tag/v0.9.0",
+        "author": {"login": "bob"},
+        "prerelease": False,
+        "draft": False,
+    }
+    new_release = {
+        "tag_name": "v1.2.0",
+        "name": "New release",
+        "body": "",
+        "created_at": "2024-01-15T10:00:00Z",
+        "published_at": "2024-01-15T10:00:00Z",
+        "html_url": "https://github.com/acme/app/releases/tag/v1.2.0",
+        "author": {"login": "alice"},
+        "prerelease": False,
+        "draft": False,
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/releases",
+        json=[new_release, old_release],
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/releases",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    releases = client.get_releases("acme", "app", since=SINCE, until=UNTIL)
+
+    assert len(releases) == 1
+    assert releases[0].tag == "v1.2.0"
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.get_contributors
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_get_contributors_returns_list() -> None:
+    payload = [
+        {"login": "alice", "contributions": 150, "html_url": "https://github.com/alice"},
+        {"login": "bob", "contributions": 42, "html_url": "https://github.com/bob"},
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contributors",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contributors",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    contributors = client.get_contributors("acme", "app")
+
+    assert len(contributors) == 2
+    assert contributors[0].login == "alice"
+    assert contributors[0].contributions == 150
+    assert contributors[0].repo == "acme/app"
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.create_issue
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_create_issue_posts_and_returns_response() -> None:
+    response_payload = {
+        "number": 99,
+        "title": "Implement feature X",
+        "html_url": "https://github.com/acme/app/issues/99",
+        "state": "open",
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/issues",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_issue(
+        "acme",
+        "app",
+        title="Implement feature X",
+        body="This is the body",
+        labels=["enhancement"],
+        assignees=["alice"],
+    )
+
+    assert result["number"] == 99
+    assert result["html_url"] == "https://github.com/acme/app/issues/99"
+    # Verify the request body
+    request_body = responses_lib.calls[0].request.body
+    import json
+    body = json.loads(request_body)
+    assert body["title"] == "Implement feature X"
+    assert body["labels"] == ["enhancement"]
+    assert body["assignees"] == ["alice"]

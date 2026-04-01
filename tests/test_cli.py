@@ -24,6 +24,8 @@ def _fake_commits():
             authored_at=datetime(2024, 1, 10, tzinfo=timezone.utc),
             url="https://github.com/acme/app/commit/abc1234567890",
             repo="acme/app",
+            additions=10,
+            deletions=3,
         )
     ]
 
@@ -213,7 +215,7 @@ def test_review_owner_lists_and_scans_all_repos() -> None:
         )
     ]
 
-    def side_effect_commits(owner, repo, since, until, author=None):
+    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False):
         return commits_app if repo == "app" else commits_api
 
     mock_gh = MagicMock()
@@ -265,4 +267,94 @@ def test_review_neither_owner_nor_repo_errors() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["review", "--days", "7"])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Stats (additions / deletions) tests
+# ---------------------------------------------------------------------------
+
+def test_review_shows_additions_deletions_in_commits_table() -> None:
+    runner = CliRunner()
+    with _patch_github(_fake_commits(), [], []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "+10" in result.output
+    assert "-3" in result.output
+
+
+def test_review_shows_repo_stats_table() -> None:
+    runner = CliRunner()
+    with _patch_github(_fake_commits(), [], []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Repo Stats" in result.output
+    assert "acme/app" in result.output
+
+
+def test_review_repo_stats_aggregates_per_repo() -> None:
+    """In all-repos mode each repo's +/- totals are aggregated correctly."""
+    runner = CliRunner()
+    commits_app = [
+        Commit(
+            sha="aaa0000000001",
+            message="feat: app feature",
+            author="Alice",
+            authored_at=datetime(2024, 1, 10, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/commit/aaa0000000001",
+            repo="acme/app",
+            additions=50,
+            deletions=5,
+        )
+    ]
+    commits_api = [
+        Commit(
+            sha="bbb0000000002",
+            message="fix: api bug",
+            author="Bob",
+            authored_at=datetime(2024, 1, 12, tzinfo=timezone.utc),
+            url="https://github.com/acme/api/commit/bbb0000000002",
+            repo="acme/api",
+            additions=20,
+            deletions=10,
+        )
+    ]
+
+    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False):
+        return commits_app if repo == "app" else commits_api
+
+    mock_gh = MagicMock()
+    mock_gh.return_value.list_repos.return_value = ["app", "api"]
+    mock_gh.return_value.get_commits.side_effect = side_effect_commits
+    mock_gh.return_value.get_issues.return_value = []
+    mock_gh.return_value.get_pull_requests.return_value = []
+
+    with patch("git_review.cli.GitHubClient", mock_gh):
+        result = runner.invoke(
+            main,
+            ["review", "--owner", "acme", "--days", "7", "--no-summary"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Repo Stats" in result.output
+    assert "+50" in result.output
+    assert "-5" in result.output
+    assert "+20" in result.output
+    assert "-10" in result.output
+
+
+def test_review_repo_stats_not_shown_when_no_commits() -> None:
+    runner = CliRunner()
+    with _patch_github([], [], []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Repo Stats" not in result.output
 

@@ -55,7 +55,10 @@ def _build_user_message(summary: ReviewSummary) -> str:
 
     lines.append(f"### Commits ({len(summary.commits)})")
     for c in summary.commits:
-        lines.append(f"- [{c.sha[:7]}] {c.message}  (by {c.author} on {c.authored_at.date()})")
+        stats_str = f"  [+{c.additions}/-{c.deletions}]" if (c.additions or c.deletions) else ""
+        lines.append(
+            f"- [{c.sha[:7]}] {c.message}  (by {c.author} on {c.authored_at.date()}){stats_str}"
+        )
 
     lines.append("")
     lines.append(f"### Issues ({len(summary.issues)})")

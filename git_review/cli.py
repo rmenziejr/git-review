@@ -2,8 +2,11 @@
 
 Usage examples
 --------------
-# Last 7 days (default)
+# Single repo – last 7 days (default)
 git-review review --repo owner/repo --token ghp_xxx --openai-key sk-xxx
+
+# All repos for an owner
+git-review review --owner myorg --days 14 --token ghp_xxx --openai-key sk-xxx
 
 # Explicit date range
 git-review review --repo owner/repo --since 2024-01-01 --until 2024-01-31
@@ -53,10 +56,16 @@ def main() -> None:
 @main.command()
 @click.option(
     "--repo",
-    required=True,
+    default=None,
     envvar="GITREVIEW_REPO",
     metavar="OWNER/REPO",
     help="GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--owner",
+    default=None,
+    metavar="OWNER",
+    help="GitHub user or organisation – reviews ALL non-archived repos.",
 )
 @click.option(
     "--token",
@@ -122,7 +131,8 @@ def main() -> None:
     help="Enable debug logging.",
 )
 def review(
-    repo: str,
+    repo: Optional[str],
+    owner: Optional[str],
     token: Optional[str],
     since_str: Optional[str],
     until_str: Optional[str],
@@ -134,10 +144,21 @@ def review(
     no_summary: bool,
     verbose: bool,
 ) -> None:
-    """Fetch GitHub activity and generate an AI summary."""
+    """Fetch GitHub activity and generate an AI summary.
+
+    Provide either --repo OWNER/REPO for a single repository, or
+    --owner OWNER to review all non-archived repositories for that user
+    or organisation.
+    """
 
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
+
+    # --- Validate target selection ------------------------------------
+    if repo and owner:
+        raise click.UsageError("Provide either --repo or --owner, not both.")
+    if not repo and not owner:
+        raise click.UsageError("Provide one of --repo OWNER/REPO or --owner OWNER.")
 
     # --- Parse / derive date window -----------------------------------
     now_utc = datetime.now(tz=timezone.utc).replace(hour=23, minute=59, second=59, microsecond=0)
@@ -163,42 +184,64 @@ def review(
     if since > until:
         raise click.UsageError("--since must be earlier than --until.")
 
-    # --- Parse owner/repo -------------------------------------------
-    parts = repo.split("/", 1)
-    if len(parts) != 2 or not all(parts):
-        raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
-    owner, repo_name = parts
-
-    # --- Fetch data from GitHub -------------------------------------
+    # --- Resolve owner + list of repos to scan ------------------------
     gh = GitHubClient(token=token)
-    review_data = ReviewSummary(owner=owner, repo=repo_name, since=since, until=until)
 
-    with console.status("[bold green]Fetching commits…"):
-        try:
-            review_data.commits = gh.get_commits(owner, repo_name, since, until, author=author)
-        except Exception as exc:
-            console.print(f"[red]Error fetching commits:[/red] {exc}")
-            sys.exit(1)
+    if repo:
+        parts = repo.split("/", 1)
+        if len(parts) != 2 or not all(parts):
+            raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+        resolved_owner, repo_names = parts[0], [parts[1]]
+    else:
+        resolved_owner = owner  # type: ignore[assignment]
+        with console.status(f"[bold green]Listing repositories for {owner}…"):
+            try:
+                repo_names = gh.list_repos(resolved_owner)
+            except Exception as exc:
+                console.print(f"[red]Error listing repositories:[/red] {exc}")
+                sys.exit(1)
+        if not repo_names:
+            console.print(f"[yellow]No repositories found for {owner}.[/yellow]")
+            return
 
-    with console.status("[bold green]Fetching issues…"):
-        try:
-            review_data.issues = gh.get_issues(owner, repo_name, since, until)
-        except Exception as exc:
-            console.print(f"[red]Error fetching issues:[/red] {exc}")
-            sys.exit(1)
+    # --- Aggregate data across all target repos -----------------------
+    all_repos_mode = len(repo_names) > 1
+    repo_label = "*" if all_repos_mode else repo_names[0]
+    review_data = ReviewSummary(
+        owner=resolved_owner, repo=repo_label, since=since, until=until
+    )
 
-    with console.status("[bold green]Fetching pull requests…"):
-        try:
-            review_data.pull_requests = gh.get_pull_requests(owner, repo_name, since, until)
-        except Exception as exc:
-            console.print(f"[red]Error fetching pull requests:[/red] {exc}")
-            sys.exit(1)
+    for repo_name in repo_names:
+        if all_repos_mode:
+            console.print(f"[dim]Scanning {resolved_owner}/{repo_name}…[/dim]")
+
+        with console.status(f"[bold green]Fetching commits for {repo_name}…"):
+            try:
+                review_data.commits += gh.get_commits(
+                    resolved_owner, repo_name, since, until, author=author
+                )
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching issues for {repo_name}…"):
+            try:
+                review_data.issues += gh.get_issues(resolved_owner, repo_name, since, until)
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping issues for {repo_name}:[/yellow] {exc}")
+
+        with console.status(f"[bold green]Fetching pull requests for {repo_name}…"):
+            try:
+                review_data.pull_requests += gh.get_pull_requests(
+                    resolved_owner, repo_name, since, until
+                )
+            except Exception as exc:
+                console.print(f"[yellow]  Skipping pull requests for {repo_name}:[/yellow] {exc}")
 
     # --- Print rich tables ------------------------------------------
-    _print_header(owner, repo_name, since, until)
-    _print_commits_table(review_data.commits)
-    _print_issues_table(review_data.issues)
-    _print_prs_table(review_data.pull_requests)
+    _print_header(resolved_owner, repo_label, since, until)
+    _print_commits_table(review_data.commits, show_repo=all_repos_mode)
+    _print_issues_table(review_data.issues, show_repo=all_repos_mode)
+    _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
 
     # --- LLM summarisation ------------------------------------------
     if no_summary:
@@ -236,10 +279,11 @@ def review(
 # ---------------------------------------------------------------------------
 
 def _print_header(owner: str, repo: str, since: datetime, until: datetime) -> None:
+    repo_display = f"{owner}/*  (all repos)" if repo == "*" else f"{owner}/{repo}"
     console.print()
     console.print(
         Panel(
-            f"[bold]{owner}/{repo}[/bold]  ·  "
+            f"[bold]{repo_display}[/bold]  ·  "
             f"{since.date()} → {until.date()}",
             title="[bold blue]git-review[/bold blue]",
             border_style="blue",
@@ -248,7 +292,7 @@ def _print_header(owner: str, repo: str, since: datetime, until: datetime) -> No
     console.print()
 
 
-def _print_commits_table(commits: list[Commit]) -> None:
+def _print_commits_table(commits: list[Commit], *, show_repo: bool = False) -> None:
     if not commits:
         console.print("[dim]No commits found in this time window.[/dim]\n")
         return
@@ -257,20 +301,25 @@ def _print_commits_table(commits: list[Commit]) -> None:
     table.add_column("SHA", style="dim", no_wrap=True, width=9)
     table.add_column("Date", no_wrap=True, width=12)
     table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
     table.add_column("Message")
 
     for c in commits:
-        table.add_row(
+        row = [
             c.sha[:7],
             str(c.authored_at.date()),
             c.author,
-            c.message[:80] + ("…" if len(c.message) > 80 else ""),
-        )
+        ]
+        if show_repo:
+            row.append(c.repo)
+        row.append(c.message[:80] + ("…" if len(c.message) > 80 else ""))
+        table.add_row(*row)
     console.print(table)
     console.print()
 
 
-def _print_issues_table(issues: list[Issue]) -> None:
+def _print_issues_table(issues: list[Issue], *, show_repo: bool = False) -> None:
     if not issues:
         console.print("[dim]No issues found in this time window.[/dim]\n")
         return
@@ -279,24 +328,31 @@ def _print_issues_table(issues: list[Issue]) -> None:
     table.add_column("#", justify="right", style="dim", width=6)
     table.add_column("State", width=8)
     table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
     table.add_column("Title")
     table.add_column("Labels")
 
     state_styles = {"open": "green", "closed": "red"}
     for i in issues:
         style = state_styles.get(i.state, "white")
-        table.add_row(
+        row = [
             str(i.number),
             f"[{style}]{i.state}[/{style}]",
             i.author,
+        ]
+        if show_repo:
+            row.append(i.repo)
+        row += [
             i.title[:80] + ("…" if len(i.title) > 80 else ""),
             ", ".join(i.labels) or "—",
-        )
+        ]
+        table.add_row(*row)
     console.print(table)
     console.print()
 
 
-def _print_prs_table(prs: list[PullRequest]) -> None:
+def _print_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None:
     if not prs:
         console.print("[dim]No pull requests found in this time window.[/dim]\n")
         return
@@ -305,18 +361,25 @@ def _print_prs_table(prs: list[PullRequest]) -> None:
     table.add_column("#", justify="right", style="dim", width=6)
     table.add_column("State", width=8)
     table.add_column("Author", no_wrap=True)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
     table.add_column("Title")
     table.add_column("Merged", width=12)
 
     for pr in prs:
         merged_str = str(pr.merged_at.date()) if pr.merged_at else "—"
         state_style = "green" if pr.state == "open" else ("magenta" if pr.merged_at else "red")
-        table.add_row(
+        row = [
             str(pr.number),
             f"[{state_style}]{pr.state}[/{state_style}]",
             pr.author,
+        ]
+        if show_repo:
+            row.append(pr.repo)
+        row += [
             pr.title[:80] + ("…" if len(pr.title) > 80 else ""),
             merged_str,
-        )
+        ]
+        table.add_row(*row)
     console.print(table)
     console.print()

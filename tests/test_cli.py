@@ -59,11 +59,12 @@ def _fake_prs():
     ]
 
 
-def _patch_github(commits=None, issues=None, prs=None):
+def _patch_github(commits=None, issues=None, prs=None, repos=None):
     mock_gh = MagicMock()
     mock_gh.return_value.get_commits.return_value = commits or []
     mock_gh.return_value.get_issues.return_value = issues or []
     mock_gh.return_value.get_pull_requests.return_value = prs or []
+    mock_gh.return_value.list_repos.return_value = repos or []
     return patch("git_review.cli.GitHubClient", mock_gh)
 
 
@@ -183,3 +184,85 @@ def test_review_warns_when_no_openai_key() -> None:
         )
     assert result.exit_code == 0
     assert "No OpenAI API key" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --owner (all-repos mode) tests
+# ---------------------------------------------------------------------------
+
+def test_review_owner_lists_and_scans_all_repos() -> None:
+    runner = CliRunner()
+    commits_app = [
+        Commit(
+            sha="aaa0000000001",
+            message="feat: app feature",
+            author="Alice",
+            authored_at=datetime(2024, 1, 10, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/commit/aaa0000000001",
+            repo="acme/app",
+        )
+    ]
+    commits_api = [
+        Commit(
+            sha="bbb0000000002",
+            message="fix: api bug",
+            author="Bob",
+            authored_at=datetime(2024, 1, 12, tzinfo=timezone.utc),
+            url="https://github.com/acme/api/commit/bbb0000000002",
+            repo="acme/api",
+        )
+    ]
+
+    def side_effect_commits(owner, repo, since, until, author=None):
+        return commits_app if repo == "app" else commits_api
+
+    mock_gh = MagicMock()
+    mock_gh.return_value.list_repos.return_value = ["app", "api"]
+    mock_gh.return_value.get_commits.side_effect = side_effect_commits
+    mock_gh.return_value.get_issues.return_value = []
+    mock_gh.return_value.get_pull_requests.return_value = []
+
+    with patch("git_review.cli.GitHubClient", mock_gh):
+        result = runner.invoke(
+            main,
+            ["review", "--owner", "acme", "--days", "7", "--no-summary"],
+        )
+
+    assert result.exit_code == 0, result.output
+    # Both repos' commits appear
+    assert "aaa0000" in result.output
+    assert "bbb0000" in result.output
+    # Header shows all-repos indicator
+    assert "acme/*" in result.output
+    # Repo column is shown
+    assert "acme/app" in result.output
+    assert "acme/api" in result.output
+    # list_repos was called once
+    mock_gh.return_value.list_repos.assert_called_once_with("acme")
+
+
+def test_review_owner_no_repos_found() -> None:
+    runner = CliRunner()
+    with _patch_github(repos=[]):
+        result = runner.invoke(
+            main,
+            ["review", "--owner", "acme", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0
+    assert "No repositories" in result.output
+
+
+def test_review_owner_and_repo_both_given_errors() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["review", "--owner", "acme", "--repo", "acme/app", "--days", "7"],
+    )
+    assert result.exit_code != 0
+
+
+def test_review_neither_owner_nor_repo_errors() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["review", "--days", "7"])
+    assert result.exit_code != 0
+

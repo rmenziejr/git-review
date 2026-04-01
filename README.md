@@ -40,14 +40,21 @@ pip install -e ".[dev]"
 ## Quick start
 
 ```bash
-# Last 7 days (default) – table output only (no LLM key required)
+# Last 7 days for a single repo – table output only (no LLM key required)
 git-review review --repo owner/repo --no-summary
+
+# All repos for a GitHub user or org
+git-review review --owner myorg --days 14 --no-summary
 
 # Use a GitHub token to avoid rate limits
 git-review review --repo owner/repo --token ghp_xxx --no-summary
 
-# AI summary – last 14 days
+# AI summary – single repo, last 14 days
 git-review review --repo owner/repo --days 14 \
+  --token ghp_xxx --openai-key sk-xxx
+
+# AI summary – ALL repos for an org
+git-review review --owner myorg --days 7 \
   --token ghp_xxx --openai-key sk-xxx
 
 # Explicit date range
@@ -84,6 +91,8 @@ since = datetime.now(tz=timezone.utc) - timedelta(days=14)
 until = datetime.now(tz=timezone.utc)
 
 gh = GitHubClient(token="ghp_xxx")
+
+# --- Single repo ---
 commits = gh.get_commits("owner", "repo", since, until)
 issues  = gh.get_issues("owner", "repo", since, until)
 prs     = gh.get_pull_requests("owner", "repo", since, until)
@@ -94,8 +103,16 @@ summary = ReviewSummary(
     commits=commits, issues=issues, pull_requests=prs,
 )
 
+# --- All repos for an org ---
+all_repos = gh.list_repos("myorg")
+summary_all = ReviewSummary(owner="myorg", repo="*", since=since, until=until)
+for repo_name in all_repos:
+    summary_all.commits       += gh.get_commits("myorg", repo_name, since, until)
+    summary_all.issues        += gh.get_issues("myorg", repo_name, since, until)
+    summary_all.pull_requests += gh.get_pull_requests("myorg", repo_name, since, until)
+
 llm = LLMClient(api_key="sk-xxx")
-text = llm.summarise(summary)
+text = llm.summarise(summary_all)
 print(text)
 ```
 
@@ -105,6 +122,7 @@ print(text)
 
 | Method | Returns | Description |
 |---|---|---|
+| `list_repos(owner)` | `list[str]` | All non-archived repo names for a user or org |
 | `get_commits(owner, repo, since, until, author=None)` | `list[Commit]` | Commits in the time window |
 | `get_issues(owner, repo, since, until, state="all")` | `list[Issue]` | Issues (PRs excluded) |
 | `get_pull_requests(owner, repo, since, until, state="all")` | `list[PullRequest]` | Pull requests |

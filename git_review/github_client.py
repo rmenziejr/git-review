@@ -77,6 +77,27 @@ class GitHubClient:
     # Public API
     # ------------------------------------------------------------------
 
+    def list_repos(self, owner: str) -> list[str]:
+        """Return all non-archived repository names for *owner*.
+
+        Works for both individual GitHub users and organisations.  Tries the
+        organisation endpoint first and falls back to the user endpoint on a
+        404.
+
+        Parameters
+        ----------
+        owner:
+            GitHub username or organisation name.
+        """
+        try:
+            raw = self._paginate(f"orgs/{owner}/repos", type="all")
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                raw = self._paginate(f"users/{owner}/repos", type="all")
+            else:
+                raise
+        return [item["name"] for item in raw if not item.get("archived", False)]
+
     def get_commits(
         self,
         owner: str,

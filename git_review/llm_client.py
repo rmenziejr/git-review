@@ -46,8 +46,9 @@ Be factual, professional, and concise.  Do not invent information.
 
 
 def _build_user_message(summary: ReviewSummary) -> str:
+    repo_label = "all repositories" if summary.repo == "*" else f"{summary.owner}/{summary.repo}"
     lines: list[str] = [
-        f"Repository: {summary.owner}/{summary.repo}",
+        f"Repository: {repo_label}",
         f"Period: {summary.since.date()} → {summary.until.date()}",
         "",
     ]

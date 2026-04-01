@@ -205,3 +205,90 @@ def test_get_pull_requests_filters_by_date() -> None:
     assert len(prs) == 1
     assert prs[0].number == 10
     assert prs[0].merged_at is not None
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.list_repos
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_list_repos_for_org() -> None:
+    payload = [
+        {"name": "api-service", "archived": False},
+        {"name": "frontend", "archived": False},
+        {"name": "old-stuff", "archived": True},  # should be excluded
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/orgs/acme/repos",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/orgs/acme/repos",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    repos = client.list_repos("acme")
+
+    assert repos == ["api-service", "frontend"]
+
+
+@responses_lib.activate
+def test_list_repos_falls_back_to_user_on_404() -> None:
+    # Org endpoint returns 404 → fall back to user endpoint
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/orgs/alice/repos",
+        json={"message": "Not Found"},
+        status=404,
+    )
+    payload = [
+        {"name": "personal-project", "archived": False},
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/users/alice/repos",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/users/alice/repos",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    repos = client.list_repos("alice")
+
+    assert repos == ["personal-project"]
+
+
+@responses_lib.activate
+def test_list_repos_excludes_archived() -> None:
+    payload = [
+        {"name": "active", "archived": False},
+        {"name": "deprecated", "archived": True},
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/orgs/acme/repos",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/orgs/acme/repos",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    repos = client.list_repos("acme")
+
+    assert "deprecated" not in repos
+    assert "active" in repos

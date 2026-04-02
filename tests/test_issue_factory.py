@@ -183,3 +183,51 @@ def test_push_issues_returns_empty_list_for_no_drafts() -> None:
 
     assert results == []
     mock_gh.create_issue.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# IssueFactory custom system_prompt
+# ---------------------------------------------------------------------------
+
+def test_factory_accepts_valid_custom_system_prompt() -> None:
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(
+            github_client=mock_gh,
+            openai_api_key="sk-fake",
+            system_prompt="Custom static prompt.",
+        )
+    assert factory._system_prompt == "Custom static prompt."
+
+
+def test_factory_raises_on_template_variable_in_system_prompt() -> None:
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    with pytest.raises(ValueError, match="unknown variable"):
+        with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+            IssueFactory(
+                github_client=mock_gh,
+                openai_api_key="sk-fake",
+                system_prompt="{{ unknown_var }}",
+            )
+
+
+def test_factory_uses_custom_prompt_in_llm_call() -> None:
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    custom = "Only extract bug-related issues."
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(
+            github_client=mock_gh,
+            openai_api_key="sk-fake",
+            system_prompt=custom,
+        )
+        factory.parse_requirements("# Requirements\n- Fix crash")
+
+    openai_instance = mock_openai_cls.return_value
+    call_kwargs = openai_instance.beta.chat.completions.parse.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0]
+    system_msg = next(m["content"] for m in messages if m["role"] == "system")
+    assert system_msg == custom

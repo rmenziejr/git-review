@@ -14,12 +14,23 @@ generates a concise summary via an LLM (OpenAI or any compatible API).
 | **Flexible time windows** | Explicit `--since`/`--until` dates *or* a `--days` delta |
 | **Author filter** | Narrow commits to a specific GitHub user |
 | **AI summarisation** | OpenAI (default) or any OpenAI-compatible endpoint |
+| **Markdown output** | Save the AI summary to a `.md` file with `--output` |
+| **Commit message generator** | Write a Conventional Commit message from your staged diff |
 | **Rich terminal output** | Colour-coded tables and a formatted summary panel |
 | **Python SDK** | Use `GitHubClient` and `LLMClient` directly in your own code |
 
 ---
 
 ## Installation
+
+### With uvx (no install needed)
+
+Run directly from PyPI without installing into your environment:
+
+```bash
+uvx git-review review --repo owner/repo --no-summary
+uvx git-review commit-message
+```
 
 ### From source
 
@@ -34,6 +45,23 @@ uv sync
 ```bash
 uv sync --extra dev
 ```
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Description |
+|---|---|
+| `GITHUB_TOKEN` | GitHub PAT (avoids `--token`) |
+| `OPENAI_API_KEY` | OpenAI API key (avoids `--openai-key`) |
+| `OPENAI_BASE_URL` | Custom API base URL (avoids `--base-url`) |
+| `GITREVIEW_REPO` | Default repository (avoids `--repo`) |
 
 ---
 
@@ -53,6 +81,10 @@ git-review review --repo owner/repo --token ghp_xxx --no-summary
 git-review review --repo owner/repo --days 14 \
   --token ghp_xxx --openai-key sk-xxx
 
+# AI summary saved to a markdown file
+git-review review --repo owner/repo --days 14 \
+  --token ghp_xxx --openai-key sk-xxx --output summary.md
+
 # AI summary – ALL repos for an org
 git-review review --owner myorg --days 7 \
   --token ghp_xxx --openai-key sk-xxx
@@ -70,14 +102,25 @@ git-review review --repo owner/repo --days 7 \
   --base-url http://localhost:11434/v1 --model llama3
 ```
 
-### Environment variables
+### Generate a commit message
 
-| Variable | Description |
-|---|---|
-| `GITHUB_TOKEN` | GitHub PAT (avoids `--token`) |
-| `OPENAI_API_KEY` | OpenAI API key (avoids `--openai-key`) |
-| `OPENAI_BASE_URL` | Custom API base URL (avoids `--base-url`) |
-| `GITREVIEW_REPO` | Default repository (avoids `--repo`) |
+Stage your changes, then run:
+
+```bash
+# Generate a Conventional Commit message from your staged diff
+git-review commit-message
+
+# Use a different model or a local Ollama instance
+git-review commit-message --model gpt-4o
+git-review commit-message --base-url http://localhost:11434/v1 --model llama3
+
+# Point at a different git repository
+git-review commit-message --repo-path /path/to/other/repo
+```
+
+The command reads the staged diff (`git diff --staged`) – or the unstaged
+diff if nothing is staged – and asks the LLM to write a
+[Conventional Commits](https://www.conventionalcommits.org/) message.
 
 ---
 
@@ -133,6 +176,12 @@ print(text)
 |---|---|---|
 | `summarise(summary: ReviewSummary)` | `str` | Markdown-formatted AI summary |
 
+#### `CommitMessageGenerator(api_key=None, model="gpt-4o-mini", base_url=None)`
+
+| Method | Returns | Description |
+|---|---|---|
+| `generate(diff: str)` | `str` | Conventional Commit message for the given diff |
+
 ---
 
 ## Running tests
@@ -147,14 +196,16 @@ uv run pytest tests/ -v
 
 ```
 git_review/
-├── __init__.py        # Public SDK exports
-├── models.py          # Dataclasses: Commit, Issue, PullRequest, ReviewSummary
-├── github_client.py   # GitHub REST API wrapper
-├── llm_client.py      # OpenAI-compatible LLM summarisation
-└── cli.py             # Click CLI entry-point
+├── __init__.py                  # Public SDK exports
+├── models.py                    # Dataclasses: Commit, Issue, PullRequest, ReviewSummary
+├── github_client.py             # GitHub REST API wrapper
+├── llm_client.py                # OpenAI-compatible LLM summarisation
+├── commit_message_generator.py  # Commit message generation from git diffs
+└── cli.py                       # Click CLI entry-point
 tests/
 ├── test_github_client.py
 ├── test_llm_client.py
+├── test_commit_message_generator.py
 └── test_cli.py
 ```
 

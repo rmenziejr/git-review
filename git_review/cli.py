@@ -257,6 +257,7 @@ def review(
     _print_commits_table(review_data.commits, show_repo=all_repos_mode)
     _print_repo_stats_table(review_data.commits)
     _print_issues_table(review_data.issues, show_repo=all_repos_mode)
+    _print_issue_days_open_stats_table(review_data.issues)
     _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
     _print_releases_table(review_data.releases, show_repo=all_repos_mode)
     _print_contributors_table(review_data.contributors, show_repo=all_repos_mode)
@@ -473,6 +474,49 @@ def _print_releases_table(releases: list[Release], *, show_repo: bool = False) -
             pre_str,
         ]
         table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+_DAYS_OPEN_BUCKETS: list[tuple[str, int | None]] = [
+    ("0–7 days", 7),
+    ("8–30 days", 30),
+    ("31–90 days", 90),
+    ("91+ days", None),
+]
+
+
+def _days_open_bucket(days: int) -> str:
+    for label, max_days in _DAYS_OPEN_BUCKETS:
+        if max_days is None or days <= max_days:
+            return label
+    return _DAYS_OPEN_BUCKETS[-1][0]  # pragma: no cover – last bucket has max_days=None
+
+
+def _print_issue_days_open_stats_table(issues: list[Issue]) -> None:
+    if not issues:
+        return
+
+    now = datetime.now(tz=timezone.utc)
+    # stats[repo][bucket] = count
+    stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for issue in issues:
+        end = issue.closed_at or now
+        days = (end - issue.created_at).days
+        bucket = _days_open_bucket(days)
+        stats[issue.repo][bucket] += 1
+
+    bucket_labels = [label for label, _ in _DAYS_OPEN_BUCKETS]
+
+    table = Table(title="Issue Age (Days Open)", show_lines=False)
+    table.add_column("Repo", no_wrap=True)
+    for label in bucket_labels:
+        table.add_column(label, justify="right", width=12)
+
+    for repo_name, buckets in sorted(stats.items()):
+        row = [repo_name] + [str(buckets.get(label, 0)) for label in bucket_labels]
+        table.add_row(*row)
+
     console.print(table)
     console.print()
 

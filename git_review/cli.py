@@ -45,6 +45,25 @@ console = Console()
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_git_root(path: str) -> Optional[str]:
+    """Walk up from *path* until a directory containing ``.git`` is found.
+
+    Returns the first matching directory, or *None* if none is found.
+    """
+    current = os.path.abspath(path)
+    while True:
+        if os.path.exists(os.path.join(current, ".git")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+# ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
 
@@ -798,10 +817,11 @@ def _print_issue_drafts(drafts: list) -> None:
 @main.command("commit-message")
 @click.option(
     "--repo-path",
-    default=".",
-    show_default=True,
+    default=None,
+    show_default=False,
     metavar="PATH",
-    help="Path to the git repository (defaults to the current directory).",
+    help="Path to the git repository (defaults to the current directory, "
+         "walking up to find the .git root).",
 )
 @click.option(
     "--openai-key",
@@ -839,7 +859,7 @@ def _print_issue_drafts(drafts: list) -> None:
     help="Enable debug logging.",
 )
 def commit_message(
-    repo_path: str,
+    repo_path: Optional[str],
     openai_key: Optional[str],
     model: str,
     base_url: Optional[str],
@@ -853,6 +873,15 @@ def commit_message(
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
+
+    # Resolve the git root: walk up from cwd (or the given path) to find .git
+    start = os.path.abspath(repo_path) if repo_path else os.getcwd()
+    resolved_repo_path = _find_git_root(start)
+    if resolved_repo_path is None:
+        console.print(
+            f"[red]Error:[/red] No git repository found at or above '{start}'."
+        )
+        sys.exit(1)
 
     effective_key = openai_key or os.environ.get("OPENAI_API_KEY")
     if not effective_key and not base_url:
@@ -869,7 +898,7 @@ def commit_message(
             sys.exit(1)
 
     try:
-        diff = get_git_diff(repo_path)
+        diff = get_git_diff(resolved_repo_path)
     except RuntimeError as exc:
         console.print(f"[red]Error reading git diff:[/red] {exc}")
         sys.exit(1)
@@ -925,10 +954,19 @@ def commit_message(
 
     # --- Commit step -------------------------------------------------------
     if click.confirm("Commit with this message?", default=False):
+        # Split on the blank line separating subject from body (Conventional Commits)
+        parts = message.split("\n\n", 1)
+        subject = parts[0].strip()
+        body = parts[1].strip() if len(parts) > 1 else ""
+
+        cmd = ["git", "commit", "-m", subject]
+        if body:
+            cmd += ["-m", body]
+
         try:
             subprocess.run(
-                ["git", "commit", "-m", message],
-                cwd=repo_path,
+                cmd,
+                cwd=resolved_repo_path,
                 check=True,
             )
         except subprocess.CalledProcessError as exc:

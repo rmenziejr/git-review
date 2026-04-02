@@ -33,6 +33,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+from .commit_message_generator import CommitMessageGenerator, get_git_diff
 from .github_client import GitHubClient
 from .issue_factory import IssueFactory, IssueDraft
 from .llm_client import LLMClient
@@ -126,6 +127,14 @@ def main() -> None:
     help="Skip LLM summarisation and only print the data tables.",
 )
 @click.option(
+    "--output",
+    "-o",
+    "output_file",
+    default=None,
+    metavar="FILE",
+    help="Write the AI summary to a markdown file instead of (or in addition to) stdout.",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
@@ -144,6 +153,7 @@ def review(
     model: str,
     base_url: Optional[str],
     no_summary: bool,
+    output_file: Optional[str],
     verbose: bool,
 ) -> None:
     """Fetch GitHub activity and generate an AI summary.
@@ -291,6 +301,15 @@ def review(
             padding=(1, 2),
         )
     )
+
+    if output_file:
+        try:
+            with open(output_file, "w", encoding="utf-8") as fh:
+                fh.write(summary_text)
+            console.print(f"\n[green]✓ Summary written to[/green] {output_file}")
+        except OSError as exc:
+            console.print(f"[red]Error writing output file:[/red] {exc}")
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -723,4 +742,98 @@ def _print_issue_drafts(drafts: list) -> None:
         )
     console.print()
     console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# commit-message command
+# ---------------------------------------------------------------------------
+
+@main.command("commit-message")
+@click.option(
+    "--repo-path",
+    default=".",
+    show_default=True,
+    metavar="PATH",
+    help="Path to the git repository (defaults to the current directory).",
+)
+@click.option(
+    "--openai-key",
+    envvar="OPENAI_API_KEY",
+    default=None,
+    help="OpenAI API key (or set OPENAI_API_KEY env var).",
+)
+@click.option(
+    "--model",
+    default="gpt-4o-mini",
+    show_default=True,
+    help="LLM model to use for commit message generation.",
+)
+@click.option(
+    "--base-url",
+    envvar="OPENAI_BASE_URL",
+    default=None,
+    help="Custom OpenAI-compatible API base URL.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def commit_message(
+    repo_path: str,
+    openai_key: Optional[str],
+    model: str,
+    base_url: Optional[str],
+    verbose: bool,
+) -> None:
+    """Generate a commit message for the current git repository.
+
+    Reads the staged diff (or falls back to the unstaged diff) and asks
+    an LLM to produce a Conventional Commit message.
+    """
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    effective_key = openai_key or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not base_url:
+        raise click.UsageError(
+            "An OpenAI API key is required. Pass --openai-key or set OPENAI_API_KEY."
+        )
+
+    try:
+        diff = get_git_diff(repo_path)
+    except RuntimeError as exc:
+        console.print(f"[red]Error reading git diff:[/red] {exc}")
+        sys.exit(1)
+
+    if not diff.strip():
+        console.print(
+            "[yellow]No changes detected.[/yellow] Stage or make some changes first."
+        )
+        sys.exit(1)
+
+    with console.status("[bold green]Generating commit message…"):
+        try:
+            generator = CommitMessageGenerator(
+                api_key=effective_key,
+                model=model,
+                base_url=base_url,
+            )
+            message = generator.generate(diff)
+        except Exception as exc:
+            console.print(f"[red]Error generating commit message:[/red] {exc}")
+            sys.exit(1)
+
+    console.print()
+    console.print(
+        Panel(
+            message,
+            title="[bold cyan]Suggested Commit Message[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
     console.print()

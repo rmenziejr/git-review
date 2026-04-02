@@ -793,3 +793,147 @@ def test_create_issues_no_drafts_returned_exits_cleanly() -> None:
     assert result.exit_code == 0
     assert "No issues were extracted" in result.output
 
+
+
+# ---------------------------------------------------------------------------
+# review --output (write summary to markdown file)
+# ---------------------------------------------------------------------------
+
+def test_review_output_writes_summary_to_file() -> None:
+    runner = CliRunner()
+    mock_llm = MagicMock()
+    mock_llm.return_value.summarise.return_value = "## Highlights\nGreat work!"
+
+    with _patch_github(_fake_commits(), [], []):
+        with patch("git_review.cli.LLMClient", mock_llm):
+            with runner.isolated_filesystem():
+                result = runner.invoke(
+                    main,
+                    [
+                        "review",
+                        "--repo", "acme/app",
+                        "--days", "7",
+                        "--openai-key", "sk-fake",
+                        "--output", "summary.md",
+                    ],
+                )
+                assert result.exit_code == 0, result.output
+                assert "summary.md" in result.output
+                with open("summary.md", encoding="utf-8") as fh:
+                    contents = fh.read()
+                assert "## Highlights" in contents
+                assert "Great work!" in contents
+
+
+def test_review_output_not_written_when_no_summary_flag() -> None:
+    """--output is silently ignored when --no-summary is set (no LLM call)."""
+    runner = CliRunner()
+
+    with _patch_github(_fake_commits(), [], []):
+        with runner.isolated_filesystem():
+            result = runner.invoke(
+                main,
+                [
+                    "review",
+                    "--repo", "acme/app",
+                    "--days", "7",
+                    "--no-summary",
+                    "--output", "summary.md",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            import os as _os
+            assert not _os.path.exists("summary.md")
+
+
+# ---------------------------------------------------------------------------
+# commit-message command
+# ---------------------------------------------------------------------------
+
+SAMPLE_DIFF = """\
+diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -1 +1,2 @@
+ def hello():
++    print("hi")
+"""
+
+
+def test_commit_message_prints_suggested_message() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat(foo): add hello print"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "commit-message",
+                    "--openai-key", "sk-fake",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    assert "feat(foo): add hello print" in result.output
+    mock_gen_cls.return_value.generate.assert_called_once_with(SAMPLE_DIFF)
+
+
+def test_commit_message_errors_when_no_openai_key() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["commit-message"],
+        env={"OPENAI_API_KEY": ""},
+    )
+    assert result.exit_code != 0
+
+
+def test_commit_message_errors_when_no_diff() -> None:
+    runner = CliRunner()
+
+    with patch("git_review.cli.get_git_diff", return_value=""):
+        result = runner.invoke(
+            main,
+            ["commit-message", "--openai-key", "sk-fake"],
+        )
+
+    assert result.exit_code != 0
+    assert "No changes detected" in result.output
+
+
+def test_commit_message_errors_on_git_failure() -> None:
+    runner = CliRunner()
+
+    with patch(
+        "git_review.cli.get_git_diff",
+        side_effect=RuntimeError("not a git repository"),
+    ):
+        result = runner.invoke(
+            main,
+            ["commit-message", "--openai-key", "sk-fake"],
+        )
+
+    assert result.exit_code != 0
+    assert "Error reading git diff" in result.output
+
+
+def test_commit_message_passes_repo_path() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "chore: update"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF) as mock_diff:
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "commit-message",
+                    "--repo-path", "/some/path",
+                    "--openai-key", "sk-fake",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    mock_diff.assert_called_once_with("/some/path")

@@ -393,6 +393,203 @@ def test_review_repo_stats_not_shown_when_no_commits() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue days-open stats table tests
+# ---------------------------------------------------------------------------
+
+def test_review_shows_issue_days_open_stats_table() -> None:
+    runner = CliRunner()
+    with _patch_github([], _fake_issues(), []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    # _fake_issues() returns a closed issue, so only the closed table appears
+    assert "Closed Issue Age" in result.output
+    assert "acme/app" in result.output
+
+
+def test_review_shows_open_issue_age_table_for_open_issues() -> None:
+    runner = CliRunner()
+    open_issue = Issue(
+        number=10,
+        title="Open issue",
+        state="open",
+        author="alice",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        closed_at=None,
+        url="https://github.com/acme/app/issues/10",
+        repo="acme/app",
+    )
+    with _patch_github([], [open_issue], []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Open Issue Age" in result.output
+    assert "Closed Issue Age" not in result.output
+
+
+def test_review_issue_days_open_stats_not_shown_when_no_issues() -> None:
+    runner = CliRunner()
+    with _patch_github([], [], []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "7", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Issue Age" not in result.output
+
+
+def test_review_issue_days_open_buckets_correctly() -> None:
+    """Issues with different ages fall into the correct buckets."""
+    runner = CliRunner()
+    issues = [
+        # 3 days open → "0–7 days"
+        Issue(
+            number=1,
+            title="Short issue",
+            state="closed",
+            author="alice",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/1",
+            repo="acme/app",
+        ),
+        # 15 days open → "8–30 days"
+        Issue(
+            number=2,
+            title="Medium issue",
+            state="closed",
+            author="bob",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 1, 16, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/2",
+            repo="acme/app",
+        ),
+        # 60 days open → "31–90 days"
+        Issue(
+            number=3,
+            title="Long issue",
+            state="closed",
+            author="carol",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 3, 1, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/3",
+            repo="acme/app",
+        ),
+        # 100 days open → "91+ days"
+        Issue(
+            number=4,
+            title="Very long issue",
+            state="closed",
+            author="dave",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 4, 10, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/4",
+            repo="acme/app",
+        ),
+    ]
+    with _patch_github([], issues, []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "180", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Closed Issue Age" in result.output
+    # All four bucket column headers should appear in the table
+    assert "0\u20137 days" in result.output
+    assert "8\u201330 days" in result.output
+    assert "31\u201390 days" in result.output
+    assert "91+ days" in result.output
+
+
+def test_review_issue_days_open_both_tables_shown_when_mixed() -> None:
+    """Both open and closed tables appear when issues of both states exist."""
+    runner = CliRunner()
+    issues = [
+        Issue(
+            number=1,
+            title="Open issue",
+            state="open",
+            author="alice",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=None,
+            url="https://github.com/acme/app/issues/1",
+            repo="acme/app",
+        ),
+        Issue(
+            number=2,
+            title="Closed issue",
+            state="closed",
+            author="bob",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 1, 8, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/2",
+            repo="acme/app",
+        ),
+    ]
+    with _patch_github([], issues, []):
+        result = runner.invoke(
+            main,
+            ["review", "--repo", "acme/app", "--days", "30", "--no-summary"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Open Issue Age" in result.output
+    assert "Closed Issue Age" in result.output
+
+
+def test_review_issue_days_open_stats_aggregates_per_repo() -> None:
+    """Issues from different repos are grouped into separate rows."""
+    runner = CliRunner()
+    issues_app = [
+        Issue(
+            number=1,
+            title="App issue",
+            state="closed",
+            author="alice",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
+            url="https://github.com/acme/app/issues/1",
+            repo="acme/app",
+        ),
+    ]
+    issues_api = [
+        Issue(
+            number=2,
+            title="API issue",
+            state="closed",
+            author="bob",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            closed_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
+            url="https://github.com/acme/api/issues/2",
+            repo="acme/api",
+        ),
+    ]
+
+    def side_effect_issues(owner, repo, since, until, state="all"):
+        return issues_app if repo == "app" else issues_api
+
+    mock_gh = MagicMock()
+    mock_gh.return_value.list_repos.return_value = ["app", "api"]
+    mock_gh.return_value.get_commits.return_value = []
+    mock_gh.return_value.get_issues.side_effect = side_effect_issues
+    mock_gh.return_value.get_pull_requests.return_value = []
+
+    with patch("git_review.cli.GitHubClient", mock_gh):
+        result = runner.invoke(
+            main,
+            ["review", "--owner", "acme", "--days", "7", "--no-summary"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Closed Issue Age" in result.output
+    assert "acme/app" in result.output
+    assert "acme/api" in result.output
+
+
+# ---------------------------------------------------------------------------
 # Releases and Contributors tables
 # ---------------------------------------------------------------------------
 

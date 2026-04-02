@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -916,9 +917,8 @@ def test_commit_message_git_commit_failure_exits_with_error() -> None:
     with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
         with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
             with patch("git_review.cli.subprocess") as mock_subprocess:
-                import subprocess as _subprocess
-                mock_subprocess.run.side_effect = _subprocess.CalledProcessError(1, "git")
-                mock_subprocess.CalledProcessError = _subprocess.CalledProcessError
+                mock_subprocess.run.side_effect = subprocess.CalledProcessError(1, "git")
+                mock_subprocess.CalledProcessError = subprocess.CalledProcessError
                 result = runner.invoke(
                     main,
                     [

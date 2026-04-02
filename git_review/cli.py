@@ -909,19 +909,19 @@ def commit_message(
         edited = click.edit(message)
         if edited is not None:
             message = edited.strip()
-        if not message:
-            console.print("[red]Commit message is empty after editing. Aborting.[/red]")
-            sys.exit(1)
-        console.print()
-        console.print(
-            Panel(
-                message,
-                title="[bold cyan]Edited Commit Message[/bold cyan]",
-                border_style="cyan",
-                padding=(1, 2),
+            if not message:
+                console.print("[red]Commit message is empty after editing. Aborting.[/red]")
+                sys.exit(1)
+            console.print()
+            console.print(
+                Panel(
+                    message,
+                    title="[bold cyan]Edited Commit Message[/bold cyan]",
+                    border_style="cyan",
+                    padding=(1, 2),
+                )
             )
-        )
-        console.print()
+            console.print()
 
     # --- Commit step -------------------------------------------------------
     if click.confirm("Commit with this message?", default=False):

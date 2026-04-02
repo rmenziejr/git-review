@@ -133,6 +133,7 @@ def main() -> None:
     "--model",
     default="gpt-4o-mini",
     show_default=True,
+    envvar="GIT_REVIEW_MODEL",
     help="LLM model to use for summarisation.",
 )
 @click.option(
@@ -181,7 +182,7 @@ def review(
     days: int,
     author: Optional[str],
     openai_key: Optional[str],
-    model: str,
+    model: Optional[str],
     base_url: Optional[str],
     no_summary: bool,
     output_file: Optional[str],
@@ -650,7 +651,8 @@ def _print_contributors_table(
 )
 @click.option(
     "--model",
-    default="gpt-4o-mini",
+    env_var="GIT_REVIEW_MODEL",
+    default="default",
     show_default=True,
     help="LLM model to use for issue generation.",
 )
@@ -833,6 +835,7 @@ def _print_issue_drafts(drafts: list) -> None:
     "--model",
     default="gpt-4o-mini",
     show_default=True,
+    envvar="GIT_REVIEW_MODEL",
     help="LLM model to use for commit message generation.",
 )
 @click.option(

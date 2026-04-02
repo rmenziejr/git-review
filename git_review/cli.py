@@ -498,27 +498,37 @@ def _print_issue_days_open_stats_table(issues: list[Issue]) -> None:
         return
 
     now = datetime.now(tz=timezone.utc)
-    # stats[repo][bucket] = count
-    stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for issue in issues:
-        end = issue.closed_at or now
-        days = (end - issue.created_at).days
-        bucket = _days_open_bucket(days)
-        stats[issue.repo][bucket] += 1
-
     bucket_labels = [label for label, _ in _DAYS_OPEN_BUCKETS]
 
-    table = Table(title="Issue Age (Days Open)", show_lines=False)
-    table.add_column("Repo", no_wrap=True)
-    for label in bucket_labels:
-        table.add_column(label, justify="right", width=12)
+    open_issues = [i for i in issues if i.state == "open"]
+    closed_issues = [i for i in issues if i.state == "closed"]
 
-    for repo_name, buckets in sorted(stats.items()):
-        row = [repo_name] + [str(buckets.get(label, 0)) for label in bucket_labels]
-        table.add_row(*row)
+    for subset, title in (
+        (open_issues, "Open Issue Age (Days Open)"),
+        (closed_issues, "Closed Issue Age (Days Open)"),
+    ):
+        if not subset:
+            continue
 
-    console.print(table)
-    console.print()
+        # stats[repo][bucket] = count
+        stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for issue in subset:
+            end = issue.closed_at or now
+            days = (end - issue.created_at).days
+            bucket = _days_open_bucket(days)
+            stats[issue.repo][bucket] += 1
+
+        table = Table(title=title, show_lines=False)
+        table.add_column("Repo", no_wrap=True)
+        for label in bucket_labels:
+            table.add_column(label, justify="right", width=12)
+
+        for repo_name, buckets in sorted(stats.items()):
+            row = [repo_name] + [str(buckets.get(label, 0)) for label in bucket_labels]
+            table.add_row(*row)
+
+        console.print(table)
+        console.print()
 
 
 def _print_contributors_table(

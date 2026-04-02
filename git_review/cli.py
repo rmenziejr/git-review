@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -902,3 +903,35 @@ def commit_message(
         )
     )
     console.print()
+
+    # --- Edit step ---------------------------------------------------------
+    if click.confirm("Edit this message?", default=False):
+        edited = click.edit(message)
+        if edited is not None:
+            message = edited.strip()
+        if not message:
+            console.print("[red]Commit message is empty after editing. Aborting.[/red]")
+            sys.exit(1)
+        console.print()
+        console.print(
+            Panel(
+                message,
+                title="[bold cyan]Edited Commit Message[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+    # --- Commit step -------------------------------------------------------
+    if click.confirm("Commit with this message?", default=False):
+        try:
+            subprocess.run(
+                ["git", "commit", "-m", message],
+                cwd=repo_path,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]git commit failed:[/red] {exc}")
+            sys.exit(1)
+        console.print("[bold green]Committed successfully.[/bold green]")

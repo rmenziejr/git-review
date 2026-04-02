@@ -873,11 +873,113 @@ def test_commit_message_prints_suggested_message() -> None:
                     "commit-message",
                     "--openai-key", "sk-fake",
                 ],
+                input="n\nn\n",  # no to edit, no to commit
             )
 
     assert result.exit_code == 0, result.output
     assert "feat(foo): add hello print" in result.output
     mock_gen_cls.return_value.generate.assert_called_once_with(SAMPLE_DIFF)
+
+
+def test_commit_message_commits_when_confirmed() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat(foo): add hello print"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            with patch("git_review.cli.subprocess") as mock_subprocess:
+                mock_subprocess.run.return_value = MagicMock(returncode=0)
+                result = runner.invoke(
+                    main,
+                    [
+                        "commit-message",
+                        "--openai-key", "sk-fake",
+                    ],
+                    input="n\ny\n",  # no to edit, yes to commit
+                )
+
+    assert result.exit_code == 0, result.output
+    assert "Committed successfully" in result.output
+    mock_subprocess.run.assert_called_once_with(
+        ["git", "commit", "-m", "feat(foo): add hello print"],
+        cwd=".",
+        check=True,
+    )
+
+
+def test_commit_message_git_commit_failure_exits_with_error() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat: something"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            with patch("git_review.cli.subprocess") as mock_subprocess:
+                import subprocess as _subprocess
+                mock_subprocess.run.side_effect = _subprocess.CalledProcessError(1, "git")
+                mock_subprocess.CalledProcessError = _subprocess.CalledProcessError
+                result = runner.invoke(
+                    main,
+                    [
+                        "commit-message",
+                        "--openai-key", "sk-fake",
+                    ],
+                    input="n\ny\n",  # no to edit, yes to commit
+                )
+
+    assert result.exit_code != 0
+    assert "git commit failed" in result.output
+
+
+def test_commit_message_edit_updates_message() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat(foo): original"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            with patch("click.edit", return_value="feat(foo): edited") as mock_edit:
+                with patch("git_review.cli.subprocess") as mock_subprocess:
+                    mock_subprocess.run.return_value = MagicMock(returncode=0)
+                    result = runner.invoke(
+                        main,
+                        [
+                            "commit-message",
+                            "--openai-key", "sk-fake",
+                        ],
+                        input="y\ny\n",  # yes to edit, yes to commit
+                    )
+
+    assert result.exit_code == 0, result.output
+    mock_edit.assert_called_once_with("feat(foo): original")
+    assert "Edited Commit Message" in result.output
+    mock_subprocess.run.assert_called_once_with(
+        ["git", "commit", "-m", "feat(foo): edited"],
+        cwd=".",
+        check=True,
+    )
+
+
+def test_commit_message_edit_empty_aborts() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat(foo): original"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            with patch("click.edit", return_value="   "):
+                result = runner.invoke(
+                    main,
+                    [
+                        "commit-message",
+                        "--openai-key", "sk-fake",
+                    ],
+                    input="y\n",  # yes to edit (result is empty)
+                )
+
+    assert result.exit_code != 0
+    assert "empty" in result.output
 
 
 def test_commit_message_errors_when_no_openai_key() -> None:
@@ -933,6 +1035,7 @@ def test_commit_message_passes_repo_path() -> None:
                     "--repo-path", "/some/path",
                     "--openai-key", "sk-fake",
                 ],
+                input="n\nn\n",  # no to edit, no to commit
             )
 
     assert result.exit_code == 0, result.output
@@ -1012,6 +1115,7 @@ def test_commit_message_prompt_file_passed_to_generator() -> None:
                         "--openai-key", "sk-fake",
                         "--prompt-file", "commit_prompt.j2",
                     ],
+                    input="n\nn\n",  # no to edit, no to commit
                 )
 
     assert result.exit_code == 0, result.output

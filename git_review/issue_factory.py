@@ -39,12 +39,16 @@ except ImportError:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment,misc]
 
 from .github_client import GitHubClient
+from .prompt_utils import validate_prompt_template
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
 
-_SYSTEM_PROMPT = """\
+# No template variables are rendered into the issue-factory system prompt.
+_PROMPT_VARS: set[str] = set()
+
+_DEFAULT_SYSTEM_PROMPT = """\
 You are a senior software engineer helping to convert a product requirements \
 document into well-structured GitHub issues.
 
@@ -107,6 +111,11 @@ class IssueFactory:
         LLM model identifier (default: ``"gpt-4o-mini"``).
     base_url:
         Custom OpenAI-compatible API base URL (Ollama, Groq, Azure, …).
+    system_prompt:
+        Optional Jinja2 template string to replace the built-in system
+        prompt.  The issue-factory prompt has no template variables, so
+        any ``{{ var }}`` expression will raise a :exc:`ValueError` at
+        construction time.
     """
 
     def __init__(
@@ -115,12 +124,21 @@ class IssueFactory:
         openai_api_key: Optional[str] = None,
         model: str = _DEFAULT_MODEL,
         base_url: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> None:
         if OpenAI is None:  # pragma: no cover
             raise ImportError(
                 "The 'openai' package is required for issue generation. "
                 "Install it with:  pip install openai"
             )
+
+        if system_prompt is not None:
+            validate_prompt_template(
+                system_prompt,
+                _PROMPT_VARS,
+                label="system_prompt",
+            )
+
         kwargs: dict = {}
         if openai_api_key:
             kwargs["api_key"] = openai_api_key
@@ -129,6 +147,7 @@ class IssueFactory:
         self._client = OpenAI(**kwargs)
         self._model = model
         self._gh = github_client
+        self._system_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
 
     def parse_requirements(self, markdown_text: str) -> list[IssueDraft]:
         """Parse *markdown_text* and return a list of :class:`IssueDraft` objects.
@@ -150,7 +169,7 @@ class IssueFactory:
         response = self._client.beta.chat.completions.parse(
             model=self._model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": markdown_text},
             ],
             response_format=IssueList,

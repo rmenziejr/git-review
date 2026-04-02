@@ -15,11 +15,16 @@ try:
 except ImportError:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment,misc]
 
+from .prompt_utils import validate_prompt_template
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
 
-_SYSTEM_PROMPT = """\
+# No template variables are rendered into the commit-message system prompt.
+_PROMPT_VARS: set[str] = set()
+
+_DEFAULT_SYSTEM_PROMPT = """\
 You are an expert software engineer writing Git commit messages.
 Given a git diff, produce a single commit message following the
 Conventional Commits specification (https://www.conventionalcommits.org/).
@@ -94,6 +99,11 @@ class CommitMessageGenerator:
         Model identifier, e.g. ``"gpt-4o"``, ``"gpt-4o-mini"``.
     base_url:
         Custom endpoint for non-OpenAI providers (Ollama, Azure, Groq …).
+    system_prompt:
+        Optional Jinja2 template string to replace the built-in system
+        prompt.  The commit-message prompt has no template variables, so
+        any ``{{ var }}`` expression will raise a :exc:`ValueError` at
+        construction time.
     """
 
     def __init__(
@@ -101,11 +111,19 @@ class CommitMessageGenerator:
         api_key: Optional[str] = None,
         model: str = _DEFAULT_MODEL,
         base_url: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> None:
         if OpenAI is None:  # pragma: no cover
             raise ImportError(
                 "The 'openai' package is required. "
                 "Install it with:  pip install openai"
+            )
+
+        if system_prompt is not None:
+            validate_prompt_template(
+                system_prompt,
+                _PROMPT_VARS,
+                label="system_prompt",
             )
 
         kwargs: dict = {}
@@ -116,6 +134,7 @@ class CommitMessageGenerator:
 
         self._client = OpenAI(**kwargs)
         self._model = model
+        self._system_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
 
     def generate(self, diff: str) -> str:
         """Return a commit message string for *diff*.
@@ -134,7 +153,7 @@ class CommitMessageGenerator:
         response = self._client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": diff},
             ],
         )

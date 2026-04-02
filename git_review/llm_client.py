@@ -15,12 +15,16 @@ except ImportError:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment,misc]
 
 from .models import ReviewSummary
+from .prompt_utils import render_prompt, validate_prompt_template
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
 
-_SYSTEM_PROMPT = """\
+# Available Jinja2 context variables for the LLMClient system prompt.
+_PROMPT_VARS: set[str] = {"n", "n_commits", "n_issues", "n_prs"}
+
+_DEFAULT_SYSTEM_PROMPT = """\
 You are a concise engineering manager summarising GitHub activity.
 Given a structured list of commits, issues, pull requests, releases, and
 contributors from a repository over a specific time window, produce a clear and
@@ -32,13 +36,13 @@ is nothing to report):
 ## Highlights
 A brief (2–4 sentence) executive summary of the most significant activity.
 
-## Commits ({n})
+## Commits ({{ n }})
 A short narrative covering the main themes of the commits.
 
-## Issues ({n})
+## Issues ({{ n }})
 Key issues opened or closed during the period.
 
-## Pull Requests ({n})
+## Pull Requests ({{ n }})
 Notable pull requests and their current status.
 
 ## Releases
@@ -119,6 +123,12 @@ class LLMClient:
         Model identifier, e.g. ``"gpt-4o"``, ``"gpt-4o-mini"``.
     base_url:
         Custom endpoint for non-OpenAI providers (Ollama, Azure, Groq …).
+    system_prompt:
+        Optional Jinja2 template string to replace the built-in system
+        prompt.  The following variables are available for use inside the
+        template: ``n``, ``n_commits``, ``n_issues``, ``n_prs``.
+        A :exc:`ValueError` is raised at construction time if the template
+        references any other variable.
     """
 
     def __init__(
@@ -126,11 +136,19 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: str = _DEFAULT_MODEL,
         base_url: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> None:
         if OpenAI is None:  # pragma: no cover
             raise ImportError(
                 "The 'openai' package is required for LLM summarisation. "
                 "Install it with:  pip install openai"
+            )
+
+        if system_prompt is not None:
+            validate_prompt_template(
+                system_prompt,
+                _PROMPT_VARS,
+                label="system_prompt",
             )
 
         kwargs: dict = {}
@@ -141,6 +159,7 @@ class LLMClient:
 
         self._client = OpenAI(**kwargs)
         self._model = model
+        self._system_prompt_template = system_prompt or _DEFAULT_SYSTEM_PROMPT
 
     def summarise(self, summary: ReviewSummary) -> str:
         """Return a markdown-formatted summary string for *summary*.
@@ -151,8 +170,12 @@ class LLMClient:
         n_issues = len(summary.issues)
         n_prs = len(summary.pull_requests)
 
-        system_prompt = _SYSTEM_PROMPT.format(
-            n=f"{n_commits} commits, {n_issues} issues, {n_prs} PRs"
+        system_prompt = render_prompt(
+            self._system_prompt_template,
+            n=f"{n_commits} commits, {n_issues} issues, {n_prs} PRs",
+            n_commits=n_commits,
+            n_issues=n_issues,
+            n_prs=n_prs,
         )
         user_message = _build_user_message(summary)
 

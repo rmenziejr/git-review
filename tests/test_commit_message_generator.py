@@ -132,3 +132,37 @@ def test_generate_passes_model_and_base_url() -> None:
     )
     call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
     assert call_kwargs["model"] == "gpt-4o"
+
+
+# ---------------------------------------------------------------------------
+# CommitMessageGenerator custom system_prompt
+# ---------------------------------------------------------------------------
+
+def test_generator_accepts_valid_static_system_prompt() -> None:
+    mock_openai_cls = MagicMock()
+    with patch("git_review.commit_message_generator.OpenAI", mock_openai_cls):
+        gen = CommitMessageGenerator(api_key="sk-fake", system_prompt="Write a short commit.")
+    assert gen._system_prompt == "Write a short commit."
+
+
+def test_generator_raises_on_template_variable_in_system_prompt() -> None:
+    from git_review.commit_message_generator import CommitMessageGenerator
+    with pytest.raises(ValueError, match="unknown variable"):
+        with patch("git_review.commit_message_generator.OpenAI", MagicMock()):
+            CommitMessageGenerator(api_key="sk-fake", system_prompt="{{ unknown_var }}")
+
+
+def test_generator_uses_custom_prompt_in_llm_call() -> None:
+    custom = "Write a haiku commit message."
+    mock_openai_cls = MagicMock()
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _make_openai_response("feat: haiku")
+    )
+
+    with patch("git_review.commit_message_generator.OpenAI", mock_openai_cls):
+        gen = CommitMessageGenerator(api_key="sk-fake", system_prompt=custom)
+        gen.generate(SAMPLE_DIFF)
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    system_msg = next(m["content"] for m in call_kwargs["messages"] if m["role"] == "system")
+    assert system_msg == custom

@@ -937,3 +937,164 @@ def test_commit_message_passes_repo_path() -> None:
 
     assert result.exit_code == 0, result.output
     mock_diff.assert_called_once_with("/some/path")
+
+
+# ---------------------------------------------------------------------------
+# --prompt-file for review command
+# ---------------------------------------------------------------------------
+
+def test_review_prompt_file_passed_to_llm_client() -> None:
+    runner = CliRunner()
+    mock_llm = MagicMock()
+    mock_llm.return_value.summarise.return_value = "## Custom\nDone."
+
+    with _patch_github(_fake_commits(), [], []):
+        with patch("git_review.cli.LLMClient", mock_llm):
+            with runner.isolated_filesystem():
+                with open("my_prompt.j2", "w") as fh:
+                    fh.write("Custom prompt with {{ n }} items.")
+                result = runner.invoke(
+                    main,
+                    [
+                        "review",
+                        "--repo", "acme/app",
+                        "--days", "7",
+                        "--openai-key", "sk-fake",
+                        "--prompt-file", "my_prompt.j2",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("system_prompt") == "Custom prompt with {{ n }} items."
+
+
+def test_review_prompt_file_invalid_template_exits_with_error() -> None:
+    runner = CliRunner()
+
+    with _patch_github(_fake_commits(), [], []):
+        with runner.isolated_filesystem():
+            with open("bad_prompt.j2", "w") as fh:
+                fh.write("{{ totally_unknown_var }}")
+            result = runner.invoke(
+                main,
+                [
+                    "review",
+                    "--repo", "acme/app",
+                    "--days", "7",
+                    "--openai-key", "sk-fake",
+                    "--prompt-file", "bad_prompt.j2",
+                ],
+            )
+
+    assert result.exit_code != 0
+    assert "unknown variable" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --prompt-file for commit-message command
+# ---------------------------------------------------------------------------
+
+def test_commit_message_prompt_file_passed_to_generator() -> None:
+    runner = CliRunner()
+    mock_gen_cls = MagicMock()
+    mock_gen_cls.return_value.generate.return_value = "feat: custom"
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with patch("git_review.cli.CommitMessageGenerator", mock_gen_cls):
+            with runner.isolated_filesystem():
+                with open("commit_prompt.j2", "w") as fh:
+                    fh.write("Write a one-line message.")
+                result = runner.invoke(
+                    main,
+                    [
+                        "commit-message",
+                        "--openai-key", "sk-fake",
+                        "--prompt-file", "commit_prompt.j2",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_gen_cls.call_args
+    assert kwargs.get("system_prompt") == "Write a one-line message."
+
+
+def test_commit_message_prompt_file_invalid_template_exits_with_error() -> None:
+    runner = CliRunner()
+
+    with patch("git_review.cli.get_git_diff", return_value=SAMPLE_DIFF):
+        with runner.isolated_filesystem():
+            with open("bad.j2", "w") as fh:
+                fh.write("{{ forbidden_var }}")
+            result = runner.invoke(
+                main,
+                [
+                    "commit-message",
+                    "--openai-key", "sk-fake",
+                    "--prompt-file", "bad.j2",
+                ],
+            )
+
+    assert result.exit_code != 0
+    assert "unknown variable" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --prompt-file for create-issues command
+# ---------------------------------------------------------------------------
+
+def test_create_issues_prompt_file_passed_to_factory() -> None:
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Issue A", body="Body A"),
+    ]
+
+    with _patch_github():
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            with runner.isolated_filesystem():
+                with open("issue_prompt.j2", "w") as fh:
+                    fh.write("Only extract bug issues.")
+                with open("reqs.md", "w") as fh:
+                    fh.write("# Reqs")
+                result = runner.invoke(
+                    main,
+                    [
+                        "create-issues",
+                        "--repo", "acme/app",
+                        "--requirements", "reqs.md",
+                        "--openai-key", "sk-fake",
+                        "--prompt-file", "issue_prompt.j2",
+                        "--dry-run",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_factory_cls.call_args
+    assert kwargs.get("system_prompt") == "Only extract bug issues."
+
+
+def test_create_issues_prompt_file_invalid_template_exits_with_error() -> None:
+    runner = CliRunner()
+
+    with _patch_github():
+        with runner.isolated_filesystem():
+            with open("bad_prompt.j2", "w") as fh:
+                fh.write("{{ unknown_var }}")
+            with open("reqs.md", "w") as fh:
+                fh.write("# Reqs")
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--requirements", "reqs.md",
+                    "--openai-key", "sk-fake",
+                    "--prompt-file", "bad_prompt.j2",
+                ],
+            )
+
+    assert result.exit_code != 0
+    assert "unknown variable" in result.output

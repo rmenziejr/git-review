@@ -111,3 +111,51 @@ def test_llm_client_passes_custom_base_url() -> None:
 
     _, kwargs = mock_openai_cls.call_args
     assert kwargs.get("base_url") == "http://localhost:11434/v1"
+
+
+# ---------------------------------------------------------------------------
+# LLMClient custom system_prompt
+# ---------------------------------------------------------------------------
+
+def test_llm_client_accepts_valid_custom_system_prompt() -> None:
+    mock_openai_cls = MagicMock()
+    with patch("git_review.llm_client.OpenAI", mock_openai_cls):
+        client = LLMClient(api_key="sk-fake", system_prompt="Summarise in {{ n }} words.")
+    assert client._system_prompt_template == "Summarise in {{ n }} words."
+
+
+def test_llm_client_raises_on_unknown_variable_in_system_prompt() -> None:
+    with pytest.raises(ValueError, match="unknown variable"):
+        with patch("git_review.llm_client.OpenAI", MagicMock()):
+            LLMClient(api_key="sk-fake", system_prompt="{{ bogus_var }}")
+
+
+def test_llm_client_renders_custom_prompt_with_context() -> None:
+    summary = _make_summary()
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Custom summary"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_openai_instance = MagicMock()
+    mock_openai_instance.chat.completions.create.return_value = mock_response
+
+    with patch("git_review.llm_client.OpenAI", MagicMock(return_value=mock_openai_instance)):
+        client = LLMClient(
+            api_key="sk-fake",
+            system_prompt="Counts: {{ n_commits }} / {{ n_issues }} / {{ n_prs }}.",
+        )
+        client.summarise(summary)
+
+    call_kwargs = mock_openai_instance.chat.completions.create.call_args[1]
+    system_msg = next(m["content"] for m in call_kwargs["messages"] if m["role"] == "system")
+    # _make_summary() has 1 commit, 1 issue, 1 PR
+    assert "Counts: 1 / 1 / 1." in system_msg
+
+
+def test_llm_client_uses_default_prompt_when_none_given() -> None:
+    mock_openai_cls = MagicMock()
+    with patch("git_review.llm_client.OpenAI", mock_openai_cls):
+        client = LLMClient(api_key="sk-fake")
+    from git_review.llm_client import _DEFAULT_SYSTEM_PROMPT
+    assert client._system_prompt_template is _DEFAULT_SYSTEM_PROMPT

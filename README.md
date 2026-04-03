@@ -1,8 +1,29 @@
 # git-review
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/git-review)](https://pypi.org/project/git-review/)
+[![Python](https://img.shields.io/pypi/pyversions/git-review)](https://pypi.org/project/git-review/)
+
 A Python CLI tool and SDK that connects to the GitHub API to extract commits,
 issues, and pull requests submitted within a configurable time window, then
 generates a concise summary via an LLM (OpenAI or any compatible API).
+
+A [VS Code extension](#vs-code-extension) is also available for a GUI workflow
+directly inside your editor.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Quick Start](#quick-start)
+- [VS Code Extension](#vs-code-extension)
+- [Python SDK](#python-sdk)
+- [Project Layout](#project-layout)
+- [Running Tests](#running-tests)
+- [License](#license)
 
 ---
 
@@ -16,12 +37,20 @@ generates a concise summary via an LLM (OpenAI or any compatible API).
 | **AI summarisation** | OpenAI (default) or any OpenAI-compatible endpoint |
 | **Markdown output** | Save the AI summary to a `.md` file with `--output` |
 | **Commit message generator** | Write a Conventional Commit message from your staged diff |
+| **Issue generator** | Parse a markdown requirements file and create GitHub issues via LLM |
 | **Rich terminal output** | Colour-coded tables and a formatted summary panel |
 | **Python SDK** | Use `GitHubClient` and `LLMClient` directly in your own code |
+| **VS Code extension** | Run all commands from the Command Palette inside VS Code |
 
 ---
 
 ## Installation
+
+### With pip
+
+```bash
+pip install git-review
+```
 
 ### With uvx (no install needed)
 
@@ -65,7 +94,9 @@ cp .env.example .env
 
 ---
 
-## Quick start
+## Quick Start
+
+### Review a repository
 
 ```bash
 # Last 7 days for a single repo – table output only (no LLM key required)
@@ -121,6 +152,61 @@ git-review commit-message --repo-path /path/to/other/repo
 The command reads the staged diff (`git diff --staged`) – or the unstaged
 diff if nothing is staged – and asks the LLM to write a
 [Conventional Commits](https://www.conventionalcommits.org/) message.
+
+### Create GitHub issues from requirements
+
+```bash
+# Parse a markdown requirements file and push issues to GitHub
+git-review create-issues --repo owner/repo --requirements requirements.md \
+  --token ghp_xxx --openai-key sk-xxx
+```
+
+---
+
+## VS Code Extension
+
+The git-review VS Code extension lets you run all commands from the Command
+Palette without leaving your editor.
+
+### Installing the extension
+
+Download the latest `git-review-*.vsix` from the
+[Releases page](https://github.com/rmenziejr/git-review/releases) and install
+it with:
+
+```bash
+code --install-extension git-review-<version>.vsix
+```
+
+Or via the VS Code UI: **Extensions → ⋯ → Install from VSIX…**
+
+> **Prerequisite:** `git-review` must be installed and on your `PATH`:
+> ```bash
+> pip install git-review
+> # or
+> uv tool install git-review
+> ```
+
+### Extension commands
+
+| Command Palette entry | Description |
+|---|---|
+| **Git Review: Review Repository** | Fetch GitHub activity and generate an AI summary |
+| **Git Review: Generate Commit Message** | Write a Conventional Commit for your staged diff |
+| **Git Review: Create Issues from Requirements** | Parse a markdown file and push GitHub issues |
+
+### Extension settings
+
+Open **File → Preferences → Settings** and search for **"git review"**.
+
+| Setting | Description | CLI / Env equivalent |
+|---|---|---|
+| `gitReview.githubToken` | GitHub personal access token | `--token` / `GITHUB_TOKEN` |
+| `gitReview.openaiApiKey` | OpenAI API key | `--openai-key` / `OPENAI_API_KEY` |
+| `gitReview.openaiBaseUrl` | Custom OpenAI-compatible base URL | `--base-url` / `OPENAI_BASE_URL` |
+| `gitReview.defaultRepo` | Default repository (`owner/repo`) | `--repo` / `GITREVIEW_REPO` |
+| `gitReview.model` | LLM model (default: `gpt-4o-mini`) | `--model` |
+| `gitReview.defaultDays` | Days to look back (default: `7`) | `--days` |
 
 ---
 
@@ -184,15 +270,7 @@ print(text)
 
 ---
 
-## Running tests
-
-```bash
-uv run pytest tests/ -v
-```
-
----
-
-## Project layout
+## Project Layout
 
 ```
 git_review/
@@ -201,11 +279,30 @@ git_review/
 ├── github_client.py             # GitHub REST API wrapper
 ├── llm_client.py                # OpenAI-compatible LLM summarisation
 ├── commit_message_generator.py  # Commit message generation from git diffs
+├── issue_factory.py             # LLM-powered GitHub issue creation
+├── prompt_utils.py              # Jinja2 prompt template loader
 └── cli.py                       # Click CLI entry-point
 tests/
 ├── test_github_client.py
 ├── test_llm_client.py
 ├── test_commit_message_generator.py
 └── test_cli.py
+vscode-extension/
+├── src/extension.ts             # VS Code extension source
+└── package.json                 # Extension manifest
 ```
+
+---
+
+## Running Tests
+
+```bash
+uv run pytest tests/ -v
+```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 

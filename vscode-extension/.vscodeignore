@@ -1,0 +1,7 @@
+out/
+node_modules/
+.vscode-test/
+src/
+**/*.map
+tsconfig.json
+.eslintrc*

@@ -27,3 +27,9 @@ htmlcov/
 
 # uv
 .uv/
+
+# VS Code extension build artifacts
+vscode-extension/out/
+vscode-extension/node_modules/
+vscode-extension/.vscode-test/
+*.vsix

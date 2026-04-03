@@ -1,0 +1,115 @@
+{
+  "name": "git-review",
+  "displayName": "git-review",
+  "description": "Summarise GitHub activity and generate commit messages with AI, powered by the git-review CLI.",
+  "version": "0.1.0",
+  "publisher": "git-review",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "git",
+    "github",
+    "ai",
+    "openai",
+    "commit",
+    "review"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rmenziejr/git-review"
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "git-review",
+      "properties": {
+        "gitReview.githubToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "GitHub personal access token. Required for private repositories and to avoid rate limits. Equivalent to the `GITHUB_TOKEN` environment variable.",
+          "order": 1
+        },
+        "gitReview.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "OpenAI API key used for AI summarisation and commit-message generation. Equivalent to the `OPENAI_API_KEY` environment variable.",
+          "order": 2
+        },
+        "gitReview.openaiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom OpenAI-compatible API base URL (e.g. `http://localhost:11434/v1` for Ollama). Equivalent to the `OPENAI_BASE_URL` environment variable.",
+          "order": 3
+        },
+        "gitReview.defaultRepo": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default GitHub repository in `owner/repo` format used when the **Review Repository** command is run without prompting. Equivalent to the `GITREVIEW_REPO` environment variable.",
+          "pattern": "^$|^[^/]+/[^/]+$",
+          "patternErrorMessage": "Must be in 'owner/repo' format.",
+          "order": 4
+        },
+        "gitReview.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "markdownDescription": "LLM model to use for all AI operations (summarisation, commit-message, issue generation). Equivalent to the `GIT_REVIEW_MODEL` environment variable.",
+          "order": 5
+        },
+        "gitReview.defaultDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "markdownDescription": "Number of days to look back when running **Review Repository** without an explicit date range.",
+          "order": 6
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "gitReview.review",
+        "title": "Review Repository",
+        "category": "Git Review"
+      },
+      {
+        "command": "gitReview.commitMessage",
+        "title": "Generate Commit Message",
+        "category": "Git Review"
+      },
+      {
+        "command": "gitReview.createIssues",
+        "title": "Create Issues from Requirements",
+        "category": "Git Review"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "gitReview.review"
+        },
+        {
+          "command": "gitReview.commitMessage"
+        },
+        {
+          "command": "gitReview.createIssues"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

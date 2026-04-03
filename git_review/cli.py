@@ -839,6 +839,13 @@ def _print_issue_drafts(drafts: list) -> None:
     help="LLM model to use for commit message generation.",
 )
 @click.option(
+    "--think",
+    "-t",
+    is_flag=True,
+    default=False,
+    help="enable thinking mode for llm"
+)
+@click.option(
     "--base-url",
     envvar="OPENAI_BASE_URL",
     default=None,
@@ -868,6 +875,7 @@ def commit_message(
     base_url: Optional[str],
     prompt_file: Optional[str],
     verbose: bool,
+    think: bool
 ) -> None:
     """Generate a commit message for the current git repository.
 
@@ -919,6 +927,7 @@ def commit_message(
                 model=model,
                 base_url=base_url,
                 system_prompt=custom_prompt,
+                thinking_mode=think
             )
             message = generator.generate(diff)
         except Exception as exc:

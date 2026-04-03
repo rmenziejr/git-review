@@ -126,7 +126,7 @@ class CommitMessageGenerator:
                 _PROMPT_VARS,
                 label="system_prompt",
             )
-
+        self.thinking_mode = thinking_mode
         kwargs: dict = {}
         if api_key:
             kwargs["api_key"] = api_key
@@ -157,6 +157,6 @@ class CommitMessageGenerator:
                 {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": diff},
             ],
-            extra_body={"chat_template_kwargs":{"enable_thinking":thinking_mode}}
+            extra_body={"chat_template_kwargs":{"enable_thinking":self.thinking_mode}}
         )
         return (response.choices[0].message.content or "").strip()

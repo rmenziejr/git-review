@@ -112,6 +112,7 @@ class CommitMessageGenerator:
         model: str = _DEFAULT_MODEL,
         base_url: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        thinking_mode: Optional[str] = False,
     ) -> None:
         if OpenAI is None:  # pragma: no cover
             raise ImportError(
@@ -156,5 +157,6 @@ class CommitMessageGenerator:
                 {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": diff},
             ],
+            extra_body={"chat_template_kwargs":{"enable_thinking":thinking_mode}}
         )
         return (response.choices[0].message.content or "").strip()

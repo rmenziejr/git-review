@@ -651,7 +651,7 @@ def _print_contributors_table(
 )
 @click.option(
     "--model",
-    env_var="GIT_REVIEW_MODEL",
+    envvar="GIT_REVIEW_MODEL",
     default="default",
     show_default=True,
     help="LLM model to use for issue generation.",

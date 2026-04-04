@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import * as path from "path";
 
 /**
  * Read all git-review settings from VS Code configuration and return them as

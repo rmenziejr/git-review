@@ -26,13 +26,9 @@ jobs:
         working-directory: vscode-extension
         run: npm ci
 
-      - name: Compile TypeScript
-        working-directory: vscode-extension
-        run: npm run compile
-
       - name: Package extension
         working-directory: vscode-extension
-        run: npx @vscode/vsce package --no-dependencies
+        run: npx vsce package --no-dependencies
 
       - name: Upload .vsix to release
         env:

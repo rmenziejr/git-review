@@ -159,3 +159,22 @@ def test_llm_client_uses_default_prompt_when_none_given() -> None:
         client = LLMClient(api_key="sk-fake")
     from git_review.llm_client import _DEFAULT_SYSTEM_PROMPT
     assert client._system_prompt_template is _DEFAULT_SYSTEM_PROMPT
+
+
+def test_invoke_with_prompt_returns_stripped_response() -> None:
+    mock_choice = MagicMock()
+    mock_choice.message.content = "  Generated text.  "
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_instance = MagicMock()
+    mock_instance.chat.completions.create.return_value = mock_response
+
+    with patch("git_review.llm_client.OpenAI", MagicMock(return_value=mock_instance)):
+        client = LLMClient(api_key="sk-fake")
+        result = client.invoke_with_prompt("System prompt.", "User message.")
+
+    assert result == "Generated text."
+    call_kwargs = mock_instance.chat.completions.create.call_args[1]
+    messages = call_kwargs["messages"]
+    assert messages[0] == {"role": "system", "content": "System prompt."}
+    assert messages[1] == {"role": "user", "content": "User message."}

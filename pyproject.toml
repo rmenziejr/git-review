@@ -25,6 +25,10 @@ dev = [
     "pytest-cov>=5.0",
     "responses>=0.25",
 ]
+langgraph = [
+    "langgraph>=1.0,<2",
+    "langchain-openai>=1.0,<2",
+]
 
 [project.scripts]
 git-review = "git_review.cli:main"

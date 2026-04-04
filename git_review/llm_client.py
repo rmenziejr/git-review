@@ -221,3 +221,36 @@ class LLMClient:
         text: str = response.choices[0].message.content or ""
         summary.summary_text = text
         return text
+
+    def invoke_with_prompt(self, system_prompt: str, user_message: str) -> str:
+        """Call the LLM with an explicit *system_prompt* and *user_message*.
+
+        This is a lower-level entry point intended for cases where the caller
+        wants to override the system prompt entirely (e.g. the LangGraph
+        ``refine`` node) without re-constructing the client.
+
+        Parameters
+        ----------
+        system_prompt:
+            The system message to send to the LLM.
+        user_message:
+            The user message to send to the LLM.
+
+        Returns
+        -------
+        str
+            The LLM's response text, stripped of leading/trailing whitespace.
+        """
+        logger.debug(
+            "invoke_with_prompt: sending %d-char prompt to %s",
+            len(system_prompt) + len(user_message),
+            self._model,
+        )
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+        )
+        return (response.choices[0].message.content or "").strip()

@@ -92,6 +92,21 @@ class Contributor:
 
 
 @dataclass
+class Milestone:
+    """A GitHub repository milestone."""
+
+    number: int
+    title: str
+    state: str
+    description: str = ""
+    due_on: Optional[datetime] = None
+    open_issues: int = 0
+    closed_issues: int = 0
+    url: str = ""
+    repo: str = ""
+
+
+@dataclass
 class ReviewSummary:
     """The aggregated result returned to callers and the CLI."""
 

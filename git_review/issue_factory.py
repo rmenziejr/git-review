@@ -87,6 +87,10 @@ class IssueDraft(BaseModel):
         default_factory=list,
         description="GitHub usernames to assign the issue to.",
     )
+    milestone: Optional[int] = Field(
+        default=None,
+        description="Milestone number to attach the issue to.",
+    )
 
 
 class IssueList(BaseModel):
@@ -183,6 +187,7 @@ class IssueFactory:
         owner: str,
         repo: str,
         drafts: list[IssueDraft],
+        milestone: Optional[int] = None,
     ) -> list[dict]:
         """Create *drafts* as real GitHub issues in *owner/repo*.
 
@@ -192,6 +197,9 @@ class IssueFactory:
             Target repository coordinates.
         drafts:
             The approved :class:`IssueDraft` objects to push.
+        milestone:
+            Optional milestone number to attach to every issue.  When provided
+            this overrides the ``milestone`` field on individual drafts.
 
         Returns
         -------
@@ -202,6 +210,7 @@ class IssueFactory:
         results: list[dict] = []
         for draft in drafts:
             logger.debug("Creating issue: %s", draft.title)
+            effective_milestone = milestone if milestone is not None else draft.milestone
             result = self._gh.create_issue(
                 owner=owner,
                 repo=repo,
@@ -209,6 +218,7 @@ class IssueFactory:
                 body=draft.body,
                 labels=draft.labels or None,
                 assignees=draft.assignees or None,
+                milestone=effective_milestone,
             )
             results.append(result)
         return results

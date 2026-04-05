@@ -25,9 +25,13 @@ dev = [
     "pytest-cov>=5.0",
     "responses>=0.25",
 ]
+gradio = [
+    "gradio>=4.0",
+]
 
 [project.scripts]
 git-review = "git_review.cli:main"
+git-review-app = "git_review.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["git_review"]

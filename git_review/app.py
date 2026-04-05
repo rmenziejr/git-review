@@ -1,6 +1,7 @@
 """Gradio web application for git-review issue management.
 
 Provides a browser-based UI to:
+- Summarize GitHub repository activity with an AI-generated report.
 - Create GitHub milestones.
 - Upload a markdown requirements document and generate issue drafts via LLM.
 - Review, edit, and selectively submit those drafts as real GitHub issues.
@@ -13,12 +14,15 @@ Launch
     # or
     gradio git_review/app.py
 
+Settings can be configured via environment variables or a ``.env`` file.
+See :class:`~git_review.config.AppSettings` for all available settings.
+
 Environment variables
 ---------------------
 GITHUB_TOKEN
     GitHub personal access token with repo write access.
 OPENAI_API_KEY
-    OpenAI API key used for requirements parsing.
+    OpenAI API key used for requirements parsing and summarisation.
 GIT_REVIEW_MODEL
     LLM model (default: gpt-4o-mini).
 OPENAI_BASE_URL
@@ -27,9 +31,10 @@ OPENAI_BASE_URL
 
 from __future__ import annotations
 
-import json
 import logging
+import tempfile
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -42,8 +47,11 @@ except ImportError as _exc:  # pragma: no cover
         "Install it with:  pip install 'git-review[gradio]'"
     ) from _exc
 
+from .config import AppSettings
 from .github_client import GitHubClient
 from .issue_factory import IssueDraft, IssueFactory
+from .llm_client import LLMClient
+from .models import ReviewSummary
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -113,6 +121,119 @@ def _table_to_drafts(rows: list[list[Any]]) -> list[IssueDraft]:
 
 
 # ---------------------------------------------------------------------------
+# Tab: Summarize Activity
+# ---------------------------------------------------------------------------
+
+def _summarize_activity(
+    github_token: str,
+    openai_key: str,
+    model: str,
+    base_url: str,
+    repo: str,
+    days: int,
+    since_str: str,
+    until_str: str,
+    author: str,
+    system_prompt: str,
+) -> tuple[str, str]:
+    """Fetch GitHub activity and return (summary_markdown, status_text)."""
+    if not repo or "/" not in repo:
+        return "", "❌  Please enter the repository in 'owner/repo' format."
+
+    parts = repo.strip().split("/", 1)
+    owner, repo_name = parts[0], parts[1]
+
+    effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not (base_url or "").strip():
+        return "", (
+            "❌  An OpenAI API key is required. "
+            "Enter it above or set OPENAI_API_KEY."
+        )
+
+    # Resolve date window
+    now_utc = datetime.now(tz=timezone.utc).replace(
+        hour=23, minute=59, second=59, microsecond=0
+    )
+    try:
+        since = (
+            datetime.strptime(since_str.strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            if since_str.strip()
+            else (now_utc - timedelta(days=max(1, int(days)))).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        )
+        until = (
+            datetime.strptime(until_str.strip(), "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+            if until_str.strip()
+            else now_utc
+        )
+    except ValueError as exc:
+        return "", f"❌  Invalid date: {exc}"
+
+    if since > until:
+        return "", "❌  'Since' date must be earlier than 'Until' date."
+
+    gh = GitHubClient(token=github_token or None)
+    review_data = ReviewSummary(owner=owner, repo=repo_name, since=since, until=until)
+    errors: list[str] = []
+
+    for fetch_fn, label in (
+        (
+            lambda: gh.get_commits(
+                owner, repo_name, since, until,
+                author=author.strip() or None,
+                include_stats=True,
+            ),
+            "commits",
+        ),
+        (lambda: gh.get_issues(owner, repo_name, since, until), "issues"),
+        (
+            lambda: gh.get_pull_requests(
+                owner, repo_name, since, until, include_details=True
+            ),
+            "pull requests",
+        ),
+        (lambda: gh.get_releases(owner, repo_name, since, until), "releases"),
+        (lambda: gh.get_contributors(owner, repo_name), "contributors"),
+    ):
+        try:
+            results = fetch_fn()
+            if label == "commits":
+                review_data.commits = results
+            elif label == "issues":
+                review_data.issues = results
+            elif label == "pull requests":
+                review_data.pull_requests = results
+            elif label == "releases":
+                review_data.releases = results
+            elif label == "contributors":
+                review_data.contributors = results
+        except Exception as exc:
+            errors.append(f"⚠️  Could not fetch {label}: {exc}")
+
+    try:
+        llm = LLMClient(
+            api_key=effective_key or None,
+            model=(model or "").strip() or "gpt-4o-mini",
+            base_url=(base_url or "").strip() or None,
+            system_prompt=system_prompt.strip() or None,
+        )
+        summary_text = llm.summarise(review_data)
+    except Exception as exc:
+        return "", f"❌  Error generating summary: {exc}"
+
+    status = (
+        f"✅  Summary generated for {owner}/{repo_name} "
+        f"({since.date()} → {until.date()})."
+    )
+    if errors:
+        status += "\n" + "\n".join(errors)
+    return summary_text, status
+
+
+# ---------------------------------------------------------------------------
 # Tab: Create Milestone
 # ---------------------------------------------------------------------------
 
@@ -134,7 +255,6 @@ def _create_milestone(
 
     due_on_iso: Optional[str] = None
     if due_on.strip():
-        from datetime import datetime, timezone
         try:
             due_dt = datetime.strptime(due_on.strip(), "%Y-%m-%d").replace(
                 hour=0, minute=0, second=0, tzinfo=timezone.utc
@@ -193,7 +313,6 @@ def _list_milestones(github_token: str, repo: str, state: str) -> str:
 
 _DRAFT_COLUMNS = ["#", "Title", "Body", "Labels", "Assignees", "Milestone #"]
 
-# Shared state: list of IssueDraft dicts stored as JSON between tab callbacks
 _EMPTY_TABLE: list[list[Any]] = []
 
 
@@ -209,7 +328,6 @@ def _parse_requirements(
     if requirements_file is not None:
         # gr.File returns a path to a Gradio-managed temporary file.
         # Resolve and validate the path to prevent path-traversal attacks.
-        import tempfile
         try:
             real_file = os.path.realpath(str(requirements_file))
             real_tmp = os.path.realpath(tempfile.gettempdir())
@@ -223,7 +341,7 @@ def _parse_requirements(
     if not requirements_text.strip():
         return _EMPTY_TABLE, "❌  Provide requirements text or upload a markdown file."
 
-    effective_key = openai_key.strip() or os.environ.get("OPENAI_API_KEY")
+    effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
     if not effective_key and not (base_url or "").strip():
         return _EMPTY_TABLE, (
             "❌  An OpenAI API key is required. "
@@ -296,10 +414,13 @@ def _submit_issues(
 # ---------------------------------------------------------------------------
 
 def build_app() -> gr.Blocks:
+    settings = AppSettings()
+
     with gr.Blocks(title="git-review · Issue Manager") as app:
         gr.Markdown("# 🔍 git-review · Issue Manager")
         gr.Markdown(
-            "Manage GitHub milestones and create issues from requirements documents."
+            "Summarize GitHub activity, manage milestones, and create issues "
+            "from requirements documents."
         )
 
         # ── Shared credentials accordion ────────────────────────────────────
@@ -309,27 +430,81 @@ def build_app() -> gr.Blocks:
                     label="GitHub Token",
                     placeholder="ghp_…  (or set GITHUB_TOKEN env var)",
                     type="password",
-                    value=os.environ.get("GITHUB_TOKEN", ""),
+                    value=settings.github_token,
                 )
                 openai_key = gr.Textbox(
                     label="OpenAI API Key",
                     placeholder="sk-…  (or set OPENAI_API_KEY env var)",
                     type="password",
-                    value=os.environ.get("OPENAI_API_KEY", ""),
+                    value=settings.openai_api_key,
                 )
             with gr.Row():
                 model = gr.Textbox(
                     label="LLM Model",
-                    value=os.environ.get("GIT_REVIEW_MODEL", "gpt-4o-mini"),
+                    value=settings.git_review_model,
                 )
                 base_url = gr.Textbox(
                     label="Custom API Base URL (optional)",
                     placeholder="http://localhost:11434/v1",
-                    value=os.environ.get("OPENAI_BASE_URL", ""),
+                    value=settings.openai_base_url,
                 )
 
         with gr.Tabs():
-            # ── Tab 1: Milestones ─────────────────────────────────────────
+            # ── Tab 1: Summarize Activity ─────────────────────────────────
+            with gr.Tab("📊 Summarize Activity"):
+                gr.Markdown(
+                    "Fetch GitHub activity for a repository and generate an "
+                    "AI-powered summary. Customize the prompt or use the default."
+                )
+                with gr.Row():
+                    sum_repo = gr.Textbox(
+                        label="Repository (owner/repo)",
+                        placeholder="myorg/myrepo",
+                    )
+                    sum_author = gr.Textbox(
+                        label="Filter commits by author (optional)",
+                        placeholder="github-username",
+                    )
+                with gr.Row():
+                    sum_days = gr.Number(
+                        label="Days back (used when Since is empty)",
+                        value=7,
+                        minimum=1,
+                        maximum=365,
+                        precision=0,
+                    )
+                    sum_since = gr.Textbox(
+                        label="Since (YYYY-MM-DD, optional)",
+                        placeholder="2024-01-01",
+                    )
+                    sum_until = gr.Textbox(
+                        label="Until (YYYY-MM-DD, optional — defaults to today)",
+                        placeholder="2024-01-31",
+                    )
+                sum_prompt = gr.Textbox(
+                    label="Custom system prompt (optional — leave blank to use default)",
+                    lines=4,
+                    placeholder=(
+                        "You are an engineering manager… "
+                        "Available Jinja2 variables: {{ n }}, {{ n_commits }}, "
+                        "{{ n_issues }}, {{ n_prs }}"
+                    ),
+                )
+                sum_btn = gr.Button("Generate Summary", variant="primary")
+                sum_status = gr.Textbox(label="Status", interactive=False)
+                sum_output = gr.Markdown(label="AI Summary")
+
+                sum_btn.click(
+                    fn=_summarize_activity,
+                    inputs=[
+                        github_token, openai_key, model, base_url,
+                        sum_repo, sum_days, sum_since, sum_until,
+                        sum_author, sum_prompt,
+                    ],
+                    outputs=[sum_output, sum_status],
+                )
+
+            # ── Tab 2: Milestones ─────────────────────────────────────────
             with gr.Tab("🏁 Milestones"):
                 gr.Markdown("### Create a Milestone")
                 with gr.Row():
@@ -382,7 +557,7 @@ def build_app() -> gr.Blocks:
                     outputs=ms_list_output,
                 )
 
-            # ── Tab 2: Parse Requirements ─────────────────────────────────
+            # ── Tab 3: Parse Requirements ─────────────────────────────────
             with gr.Tab("📄 Parse Requirements"):
                 gr.Markdown(
                     "Upload a markdown requirements document or paste it below. "
@@ -408,7 +583,7 @@ def build_app() -> gr.Blocks:
                 drafts_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
-                    column_count=(6, "fixed"),
+                    column_count=6,
                     wrap=True,
                 )
 
@@ -418,7 +593,7 @@ def build_app() -> gr.Blocks:
                     outputs=[drafts_table, parse_status],
                 )
 
-            # ── Tab 3: Submit Issues ─────────────────────────────────────
+            # ── Tab 4: Submit Issues ─────────────────────────────────────
             with gr.Tab("🚀 Submit Issues"):
                 gr.Markdown(
                     "Review the table below (carried over from the Parse tab) and "
@@ -437,7 +612,7 @@ def build_app() -> gr.Blocks:
                 submit_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
-                    column_count=(6, "fixed"),
+                    column_count=6,
                     wrap=True,
                 )
 
@@ -473,3 +648,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

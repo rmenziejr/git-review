@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 import requests
 from dateutil.parser import isoparse
 
-from .models import Commit, Contributor, Issue, PullRequest, Release
+from .models import Commit, Contributor, Issue, Milestone, PullRequest, Release
 
 logger = logging.getLogger(__name__)
 
@@ -405,6 +405,7 @@ class GitHubClient:
         body: str = "",
         labels: Optional[list[str]] = None,
         assignees: Optional[list[str]] = None,
+        milestone: Optional[int] = None,
     ) -> dict:
         """Create a new issue in *repo* and return the raw API response.
 
@@ -420,13 +421,82 @@ class GitHubClient:
             Optional list of label names to apply.
         assignees:
             Optional list of GitHub usernames to assign.
+        milestone:
+            Optional milestone number to attach the issue to.
         """
         payload: dict[str, Any] = {"title": title, "body": body}
         if labels:
             payload["labels"] = labels
         if assignees:
             payload["assignees"] = assignees
+        if milestone is not None:
+            payload["milestone"] = milestone
         return self._post(f"repos/{owner}/{repo}/issues", json=payload)
+
+    def create_milestone(
+        self,
+        owner: str,
+        repo: str,
+        title: str,
+        description: str = "",
+        due_on: Optional[str] = None,
+        state: str = "open",
+    ) -> dict:
+        """Create a milestone in *repo* and return the raw API response.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        title:
+            Milestone title.
+        description:
+            Optional description for the milestone.
+        due_on:
+            Optional ISO 8601 due date string (e.g. ``"2024-12-31T00:00:00Z"``).
+        state:
+            ``"open"`` (default) or ``"closed"``.
+        """
+        payload: dict[str, Any] = {"title": title, "state": state}
+        if description:
+            payload["description"] = description
+        if due_on:
+            payload["due_on"] = due_on
+        return self._post(f"repos/{owner}/{repo}/milestones", json=payload)
+
+    def list_milestones(
+        self,
+        owner: str,
+        repo: str,
+        state: str = "open",
+    ) -> list[Milestone]:
+        """Return milestones for *repo*.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        state:
+            ``"open"`` (default), ``"closed"``, or ``"all"``.
+        """
+        raw = self._paginate(f"repos/{owner}/{repo}/milestones", state=state)
+        milestones: list[Milestone] = []
+        for item in raw:
+            due_on_str = item.get("due_on")
+            milestones.append(
+                Milestone(
+                    number=item["number"],
+                    title=item.get("title", ""),
+                    state=item.get("state", ""),
+                    description=item.get("description") or "",
+                    due_on=isoparse(due_on_str) if due_on_str else None,
+                    open_issues=item.get("open_issues", 0),
+                    closed_issues=item.get("closed_issues", 0),
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                )
+            )
+        return milestones
 
 
 # ------------------------------------------------------------------

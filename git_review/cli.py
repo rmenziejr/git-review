@@ -676,6 +676,14 @@ def _print_contributors_table(
     help="Parse and display issue drafts but do not push to GitHub.",
 )
 @click.option(
+    "--milestone",
+    "milestone_number",
+    default=None,
+    type=int,
+    metavar="NUMBER",
+    help="Milestone number to attach to every created issue.",
+)
+@click.option(
     "--prompt-file",
     "-p",
     "prompt_file",
@@ -701,6 +709,7 @@ def create_issues(
     base_url: Optional[str],
     yes: bool,
     dry_run: bool,
+    milestone_number: Optional[int],
     prompt_file: Optional[str],
     verbose: bool,
 ) -> None:
@@ -782,7 +791,7 @@ def create_issues(
 
     with console.status(f"[bold green]Creating {len(approved)} issue(s) in {owner}/{repo_name}…"):
         try:
-            results = factory.push_issues(owner, repo_name, approved)
+            results = factory.push_issues(owner, repo_name, approved, milestone=milestone_number)
         except Exception as exc:
             console.print(f"[red]Error creating issues:[/red] {exc}")
             sys.exit(1)
@@ -799,6 +808,7 @@ def _print_issue_drafts(drafts: list) -> None:
     table.add_column("Title")
     table.add_column("Labels")
     table.add_column("Assignees")
+    table.add_column("Milestone", justify="right", width=10)
 
     for i, draft in enumerate(drafts, 1):
         table.add_row(
@@ -806,10 +816,109 @@ def _print_issue_drafts(drafts: list) -> None:
             draft.title,
             ", ".join(draft.labels) or "—",
             ", ".join(draft.assignees) or "—",
+            str(draft.milestone) if draft.milestone is not None else "—",
         )
     console.print()
     console.print(table)
     console.print()
+
+
+# ---------------------------------------------------------------------------
+# create-milestone command
+# ---------------------------------------------------------------------------
+
+@main.command("create-milestone")
+@click.option(
+    "--repo",
+    required=True,
+    envvar="GITREVIEW_REPO",
+    metavar="OWNER/REPO",
+    help="Target GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--title",
+    required=True,
+    help="Milestone title.",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Optional milestone description.",
+)
+@click.option(
+    "--due-on",
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Optional due date for the milestone (YYYY-MM-DD).",
+)
+@click.option(
+    "--state",
+    default="open",
+    show_default=True,
+    type=click.Choice(["open", "closed"], case_sensitive=False),
+    help="Milestone state.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub personal access token (or set GITHUB_TOKEN env var).",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def create_milestone(
+    repo: str,
+    title: str,
+    description: str,
+    due_on: Optional[str],
+    state: str,
+    token: Optional[str],
+    verbose: bool,
+) -> None:
+    """Create a milestone in a GitHub repository."""
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    parts = repo.split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+    owner, repo_name = parts
+
+    due_on_iso: Optional[str] = None
+    if due_on:
+        try:
+            due_dt = datetime.strptime(due_on, "%Y-%m-%d").replace(
+                hour=0, minute=0, second=0, tzinfo=timezone.utc
+            )
+            due_on_iso = due_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            raise click.BadParameter(
+                f"Invalid date '{due_on}'. Use YYYY-MM-DD.", param_hint="--due-on"
+            )
+
+    gh = GitHubClient(token=token)
+    try:
+        result = gh.create_milestone(
+            owner=owner,
+            repo=repo_name,
+            title=title,
+            description=description,
+            due_on=due_on_iso,
+            state=state,
+        )
+    except Exception as exc:
+        console.print(f"[red]Error creating milestone:[/red] {exc}")
+        sys.exit(1)
+
+    console.print(
+        f"\n[green]✓ Milestone #{result.get('number')} created:[/green] "
+        f"{result.get('title')}  {result.get('html_url', '')}"
+    )
 
 
 # ---------------------------------------------------------------------------

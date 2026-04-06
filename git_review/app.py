@@ -590,7 +590,6 @@ def build_app() -> gr.Blocks:
                 drafts_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
-                    column_count=6,
                     wrap=True,
                 )
 
@@ -619,7 +618,6 @@ def build_app() -> gr.Blocks:
                 submit_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
-                    column_count=6,
                     wrap=True,
                 )
 

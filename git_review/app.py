@@ -47,6 +47,13 @@ except ImportError as _exc:  # pragma: no cover
         "Install it with:  pip install 'git-review[gradio]'"
     ) from _exc
 
+if not hasattr(gr, "Blocks"):  # pragma: no cover
+    _gradio_version = getattr(gr, "__version__", "unknown")
+    raise ImportError(
+        f"gradio>=4.0 is required but {_gradio_version!r} is installed. "
+        "Upgrade with:  pip install 'git-review[gradio]'"
+    )
+
 from .config import AppSettings
 from .github_client import GitHubClient
 from .issue_factory import IssueDraft, IssueFactory

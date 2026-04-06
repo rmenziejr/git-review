@@ -792,3 +792,203 @@ def test_create_issue_posts_and_returns_response() -> None:
     assert body["title"] == "Implement feature X"
     assert body["labels"] == ["enhancement"]
     assert body["assignees"] == ["alice"]
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.create_issue – milestone support
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_create_issue_with_milestone() -> None:
+    response_payload = {
+        "number": 5,
+        "title": "Fix dashboard",
+        "html_url": "https://github.com/acme/app/issues/5",
+        "state": "open",
+        "milestone": {"number": 3, "title": "v2.0"},
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/issues",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_issue(
+        "acme",
+        "app",
+        title="Fix dashboard",
+        body="",
+        milestone=3,
+    )
+
+    assert result["number"] == 5
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body["milestone"] == 3
+
+
+@responses_lib.activate
+def test_create_issue_without_milestone_omits_field() -> None:
+    response_payload = {"number": 6, "title": "New issue", "html_url": "", "state": "open"}
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/issues",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    client.create_issue("acme", "app", title="New issue")
+
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert "milestone" not in body
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.create_milestone
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_create_milestone_returns_response() -> None:
+    response_payload = {
+        "number": 1,
+        "title": "v1.0",
+        "description": "First release",
+        "state": "open",
+        "html_url": "https://github.com/acme/app/milestone/1",
+        "due_on": None,
+        "open_issues": 0,
+        "closed_issues": 0,
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/milestones",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_milestone(
+        "acme", "app", title="v1.0", description="First release"
+    )
+
+    assert result["number"] == 1
+    assert result["title"] == "v1.0"
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body["title"] == "v1.0"
+    assert body["description"] == "First release"
+    assert body["state"] == "open"
+
+
+@responses_lib.activate
+def test_create_milestone_with_due_date() -> None:
+    response_payload = {
+        "number": 2,
+        "title": "v2.0",
+        "description": "",
+        "state": "open",
+        "html_url": "https://github.com/acme/app/milestone/2",
+        "due_on": "2024-12-31T00:00:00Z",
+        "open_issues": 0,
+        "closed_issues": 0,
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/milestones",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_milestone(
+        "acme", "app", title="v2.0", due_on="2024-12-31T00:00:00Z"
+    )
+
+    assert result["number"] == 2
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body["due_on"] == "2024-12-31T00:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.list_milestones
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_list_milestones_returns_list() -> None:
+    payload = [
+        {
+            "number": 1,
+            "title": "v1.0",
+            "state": "open",
+            "description": "First release",
+            "due_on": "2024-06-30T00:00:00Z",
+            "open_issues": 3,
+            "closed_issues": 5,
+            "html_url": "https://github.com/acme/app/milestone/1",
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/milestones",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/milestones",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    milestones = client.list_milestones("acme", "app")
+
+    assert len(milestones) == 1
+    assert milestones[0].number == 1
+    assert milestones[0].title == "v1.0"
+    assert milestones[0].state == "open"
+    assert milestones[0].description == "First release"
+    assert milestones[0].open_issues == 3
+    assert milestones[0].closed_issues == 5
+    assert milestones[0].due_on is not None
+    assert milestones[0].repo == "acme/app"
+
+
+@responses_lib.activate
+def test_list_milestones_with_no_due_date() -> None:
+    payload = [
+        {
+            "number": 2,
+            "title": "Backlog",
+            "state": "open",
+            "description": "",
+            "due_on": None,
+            "open_issues": 10,
+            "closed_issues": 0,
+            "html_url": "https://github.com/acme/app/milestone/2",
+        }
+    ]
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/milestones",
+        json=payload,
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/milestones",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    milestones = client.list_milestones("acme", "app", state="open")
+
+    assert len(milestones) == 1
+    assert milestones[0].due_on is None
+    assert milestones[0].description == ""

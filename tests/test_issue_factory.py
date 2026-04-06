@@ -231,3 +231,76 @@ def test_factory_uses_custom_prompt_in_llm_call() -> None:
     messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0]
     system_msg = next(m["content"] for m in messages if m["role"] == "system")
     assert system_msg == custom
+
+
+# ---------------------------------------------------------------------------
+# IssueDraft – milestone field
+# ---------------------------------------------------------------------------
+
+def test_issue_draft_accepts_milestone() -> None:
+    draft = IssueDraft(title="Add feature", body="Body", milestone=3)
+    assert draft.milestone == 3
+
+
+def test_issue_draft_milestone_defaults_to_none() -> None:
+    draft = IssueDraft(title="Add feature", body="Body")
+    assert draft.milestone is None
+
+
+# ---------------------------------------------------------------------------
+# IssueFactory.push_issues – milestone support
+# ---------------------------------------------------------------------------
+
+def test_push_issues_passes_draft_milestone() -> None:
+    """When a draft has a milestone, it should be passed to create_issue."""
+    drafts = [
+        IssueDraft(title="Issue A", body="Body A", milestone=2),
+    ]
+    mock_gh = MagicMock()
+    mock_gh.create_issue.return_value = {
+        "number": 1, "html_url": "https://github.com/acme/app/issues/1"
+    }
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.push_issues("acme", "app", drafts)
+
+    call = mock_gh.create_issue.call_args_list[0]
+    assert call.kwargs["milestone"] == 2
+
+
+def test_push_issues_milestone_override_takes_precedence() -> None:
+    """A milestone= kwarg to push_issues overrides per-draft milestones."""
+    drafts = [
+        IssueDraft(title="Issue A", body="Body A", milestone=1),
+        IssueDraft(title="Issue B", body="Body B"),
+    ]
+    mock_gh = MagicMock()
+    mock_gh.create_issue.side_effect = [
+        {"number": 1, "html_url": ""},
+        {"number": 2, "html_url": ""},
+    ]
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.push_issues("acme", "app", drafts, milestone=99)
+
+    for call in mock_gh.create_issue.call_args_list:
+        assert call.kwargs["milestone"] == 99
+
+
+def test_push_issues_no_milestone_passes_none() -> None:
+    """When neither draft nor override provides a milestone, None is passed."""
+    drafts = [IssueDraft(title="Issue A", body="Body A")]
+    mock_gh = MagicMock()
+    mock_gh.create_issue.return_value = {"number": 1, "html_url": ""}
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.push_issues("acme", "app", drafts)
+
+    call = mock_gh.create_issue.call_args_list[0]
+    assert call.kwargs["milestone"] is None

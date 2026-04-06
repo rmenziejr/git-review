@@ -33,6 +33,7 @@ Available context variables per component
 from __future__ import annotations
 
 import jinja2
+import jinja2.sandbox
 from jinja2 import meta
 
 
@@ -103,6 +104,10 @@ def validate_prompt_template(
 def render_prompt(template_str: str, **kwargs: object) -> str:
     """Render *template_str* as a Jinja2 template using *kwargs* as context.
 
+    A :class:`jinja2.sandbox.SandboxedEnvironment` is used so that
+    user-supplied templates cannot access Python internals or execute
+    arbitrary code.
+
     Parameters
     ----------
     template_str:
@@ -115,5 +120,5 @@ def render_prompt(template_str: str, **kwargs: object) -> str:
     str
         The rendered string.
     """
-    env = jinja2.Environment()
+    env = jinja2.sandbox.SandboxedEnvironment()
     return env.from_string(template_str).render(**kwargs)

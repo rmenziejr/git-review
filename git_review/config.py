@@ -36,14 +36,16 @@ class AppSettings(BaseSettings):
     or a ``.env`` file.  The mapping between field names and environment
     variable names is:
 
-    ==================  ======================
-    Field               Environment variable
-    ==================  ======================
-    ``github_token``    ``GITHUB_TOKEN``
-    ``openai_api_key``  ``OPENAI_API_KEY``
-    ``git_review_model`` ``GIT_REVIEW_MODEL``
-    ``openai_base_url`` ``OPENAI_BASE_URL``
-    ==================  ======================
+    ======================  =======================
+    Field                   Environment variable
+    ======================  =======================
+    ``github_token``        ``GITHUB_TOKEN``
+    ``openai_api_key``      ``OPENAI_API_KEY``
+    ``git_review_model``    ``GIT_REVIEW_MODEL``
+    ``openai_base_url``     ``OPENAI_BASE_URL``
+    ``gradio_server_name``  ``GRADIO_SERVER_NAME``
+    ``gradio_server_port``  ``GRADIO_SERVER_PORT``
+    ======================  =======================
     """
 
     model_config = SettingsConfigDict(
@@ -72,4 +74,15 @@ class AppSettings(BaseSettings):
             "Custom OpenAI-compatible API base URL "
             "(e.g. 'http://localhost:11434/v1' for Ollama)."
         ),
+    )
+    gradio_server_name: str = Field(
+        default="0.0.0.0",
+        description=(
+            "Hostname or IP address for the Gradio server to bind to "
+            "(e.g. '127.0.0.1' or '0.0.0.0')."
+        ),
+    )
+    gradio_server_port: int = Field(
+        default=7860,
+        description="TCP port for the Gradio server (e.g. 7860).",
     )

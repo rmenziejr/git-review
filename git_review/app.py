@@ -27,6 +27,10 @@ GIT_REVIEW_MODEL
     LLM model (default: gpt-4o-mini).
 OPENAI_BASE_URL
     Custom OpenAI-compatible base URL (optional).
+GRADIO_SERVER_NAME
+    Hostname or IP address for the Gradio server (default: 0.0.0.0).
+GRADIO_SERVER_PORT
+    TCP port for the Gradio server (default: 7860).
 """
 
 from __future__ import annotations
@@ -647,8 +651,14 @@ def build_app() -> gr.Blocks:
 
 def main() -> None:
     """Launch the Gradio app."""
+    from git_review.config import AppSettings
+
+    settings = AppSettings()
     app = build_app()
-    app.launch()
+    app.launch(
+        server_name=settings.gradio_server_name,
+        server_port=settings.gradio_server_port,
+    )
 
 
 if __name__ == "__main__":

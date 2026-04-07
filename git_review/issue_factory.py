@@ -52,13 +52,18 @@ _DEFAULT_SYSTEM_PROMPT = """\
 You are a senior software engineer helping to convert a product requirements \
 document into well-structured GitHub issues.
 
-For each distinct requirement or user story in the document, produce one issue \
-with:
+Analyze all requirements and user stories holistically, then produce the \
+minimal set of clear, objective, and achievable issues needed to fully satisfy \
+all requirements and user story criteria. Each issue should represent a \
+coherent, independently deliverable unit of work.
+
+Each issue must have:
 - A concise, action-oriented title (start with a verb, e.g. "Add", "Fix", \
 "Implement").
 - A body written in GitHub Markdown that includes:
-  - A short description of the requirement.
-  - An "Acceptance Criteria" section with a checklist of testable criteria.
+  - A short description of the work to be done.
+  - A "Key Results" section with a checklist of measurable, verifiable \
+outcomes that confirm the issue is complete.
 - A list of relevant labels from: bug, enhancement, documentation, \
 question, help wanted, good first issue.
 - An optional list of GitHub usernames to assign (leave empty if none are \
@@ -76,7 +81,7 @@ class IssueDraft(BaseModel):
         ...,
         description=(
             "Full issue body in GitHub Markdown, including description and "
-            "acceptance criteria checklist."
+            "key results checklist."
         ),
     )
     labels: list[str] = Field(

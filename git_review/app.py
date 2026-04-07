@@ -157,8 +157,6 @@ def _summarize_activity(
     if all_repos:
         # Accept either "owner" or "owner/repo" – extract just the owner part.
         owner = repo.split("/", 1)[0].strip()
-        if not owner:
-            return "", "❌  Please enter a valid owner name."
         repo_label = "*"
     else:
         if "/" not in repo:
@@ -201,6 +199,7 @@ def _summarize_activity(
     gh = GitHubClient(token=github_token or None)
     review_data = ReviewSummary(owner=owner, repo=repo_label, since=since, until=until)
     errors: list[str] = []
+    author_filter = author.strip() or None
 
     if all_repos:
         try:
@@ -217,7 +216,7 @@ def _summarize_activity(
             (
                 lambda rn=repo_name: gh.get_commits(
                     owner, rn, since, until,
-                    author=author.strip() or None,
+                    author=author_filter,
                     include_stats=True,
                 ),
                 "commits",

@@ -327,6 +327,28 @@ _DRAFT_COLUMNS = ["#", "Title", "Body", "Labels", "Assignees", "Milestone #"]
 _EMPTY_TABLE: list[list[Any]] = []
 
 
+def _fetch_requirements_from_repo(
+    github_token: str,
+    repo: str,
+    path: str,
+) -> tuple[str, str]:
+    """Fetch a requirements file from a GitHub repo and return (content, status)."""
+    if not repo or "/" not in repo:
+        return "", "❌  Please enter the repository in 'owner/repo' format."
+    path = (path or "docs/requirements.md").strip()
+    if not path:
+        return "", "❌  Please enter a file path."
+
+    parts = repo.strip().split("/", 1)
+    owner, repo_name = parts[0], parts[1]
+    gh = GitHubClient(token=github_token or None)
+    try:
+        content = gh.get_file_content(owner, repo_name, path)
+    except Exception as exc:
+        return "", f"❌  Error fetching file: {exc}"
+    return content, f"✅  Fetched '{path}' from {owner}/{repo_name} ({len(content)} chars)."
+
+
 def _parse_requirements(
     github_token: str,
     openai_key: str,
@@ -334,6 +356,8 @@ def _parse_requirements(
     base_url: str,
     requirements_text: str,
     requirements_file: Any,
+    use_milestones: bool,
+    milestones_repo: str,
 ) -> tuple[list[list[Any]], str]:
     """Parse requirements text or uploaded file and return draft rows."""
     if requirements_file is not None:
@@ -359,17 +383,31 @@ def _parse_requirements(
             "Enter it in the field above or set OPENAI_API_KEY."
         )
 
+    # Optionally fetch milestones to guide the LLM
+    milestones = None
+    if use_milestones and milestones_repo and "/" in milestones_repo:
+        try:
+            ms_parts = milestones_repo.strip().split("/", 1)
+            ms_owner, ms_repo_name = ms_parts[0], ms_parts[1]
+            gh_ms = GitHubClient(token=github_token or None)
+            milestones = gh_ms.list_milestones(ms_owner, ms_repo_name, state="open") or None
+        except Exception:
+            milestones = None
+
     try:
         _, factory = _make_clients(github_token, effective_key or "", model, base_url)
-        drafts = factory.parse_requirements(requirements_text)
+        drafts = factory.parse_requirements(requirements_text, milestones=milestones)
     except Exception as exc:
         return _EMPTY_TABLE, f"❌  Error parsing requirements: {exc}"
 
     if not drafts:
         return _EMPTY_TABLE, "⚠️  No issues were extracted from the requirements document."
 
+    milestone_note = (
+        f" (with {len(milestones)} milestone(s) as context)" if milestones else ""
+    )
     rows = _drafts_to_table(drafts)
-    return rows, f"✅  Extracted {len(drafts)} issue draft(s). Review and edit below."
+    return rows, f"✅  Extracted {len(drafts)} issue draft(s){milestone_note}. Review and edit below."
 
 
 # ---------------------------------------------------------------------------
@@ -580,9 +618,31 @@ def build_app() -> gr.Blocks:
             # ── Tab 3: Parse Requirements ─────────────────────────────────
             with gr.Tab("📄 Parse Requirements"):
                 gr.Markdown(
-                    "Upload a markdown requirements document or paste it below. "
+                    "Upload a markdown requirements document, paste it below, or "
+                    "fetch it directly from a GitHub repository.  "
                     "The LLM will extract individual issues as drafts."
                 )
+
+                # Fetch from repo section
+                with gr.Accordion("🔗 Fetch requirements from GitHub repo", open=False):
+                    gr.Markdown(
+                        "Enter the repository and the path to the requirements file "
+                        "(default: `docs/requirements.md`).  "
+                        "Click **Fetch** to load it into the text area below."
+                    )
+                    with gr.Row():
+                        fetch_repo = gr.Textbox(
+                            label="Repository (owner/repo)",
+                            placeholder="myorg/myrepo",
+                        )
+                        fetch_path = gr.Textbox(
+                            label="File path in repo",
+                            value="docs/requirements.md",
+                            placeholder="docs/requirements.md",
+                        )
+                    fetch_btn = gr.Button("Fetch from GitHub")
+                    fetch_status = gr.Textbox(label="Fetch status", interactive=False)
+
                 req_file = gr.File(
                     label="Upload Markdown File (optional)",
                     file_types=[".md", ".txt"],
@@ -592,6 +652,22 @@ def build_app() -> gr.Blocks:
                     lines=10,
                     placeholder="## Feature Requirements\n- Users should be able to log in…",
                 )
+
+                # Milestone context option
+                with gr.Row():
+                    use_milestones_chk = gr.Checkbox(
+                        label="Include repo milestones as AI context",
+                        value=False,
+                        info=(
+                            "Fetch open milestones from the repo and pass them to the "
+                            "LLM so it can assign each issue to the right milestone."
+                        ),
+                    )
+                    milestones_repo = gr.Textbox(
+                        label="Milestones repo (owner/repo)",
+                        placeholder="myorg/myrepo  (leave blank to use Fetch repo above)",
+                    )
+
                 parse_btn = gr.Button("Parse Requirements", variant="primary")
                 parse_status = gr.Textbox(label="Status", interactive=False)
 
@@ -606,9 +682,29 @@ def build_app() -> gr.Blocks:
                     wrap=True,
                 )
 
+                def _resolve_milestones_repo(milestones_repo_val: str, fetch_repo_val: str) -> str:
+                    """Return milestones_repo if set, otherwise fall back to fetch_repo."""
+                    return (milestones_repo_val or "").strip() or (fetch_repo_val or "").strip()
+
+                fetch_btn.click(
+                    fn=_fetch_requirements_from_repo,
+                    inputs=[github_token, fetch_repo, fetch_path],
+                    outputs=[req_text, fetch_status],
+                )
+
                 parse_btn.click(
-                    fn=_parse_requirements,
-                    inputs=[github_token, openai_key, model, base_url, req_text, req_file],
+                    fn=lambda gh_tok, oai_key, mdl, burl, rtxt, rfile, use_ms, ms_repo, fr_repo: (
+                        _parse_requirements(
+                            gh_tok, oai_key, mdl, burl, rtxt, rfile,
+                            use_ms,
+                            _resolve_milestones_repo(ms_repo, fr_repo),
+                        )
+                    ),
+                    inputs=[
+                        github_token, openai_key, model, base_url,
+                        req_text, req_file,
+                        use_milestones_chk, milestones_repo, fetch_repo,
+                    ],
                     outputs=[drafts_table, parse_status],
                 )
 

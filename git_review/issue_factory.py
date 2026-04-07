@@ -29,7 +29,7 @@ Example
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +39,7 @@ except ImportError:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment,misc]
 
 from .github_client import GitHubClient
+from .models import Milestone
 from .prompt_utils import validate_prompt_template
 
 logger = logging.getLogger(__name__)
@@ -158,7 +159,11 @@ class IssueFactory:
         self._gh = github_client
         self._system_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
 
-    def parse_requirements(self, markdown_text: str) -> list[IssueDraft]:
+    def parse_requirements(
+        self,
+        markdown_text: str,
+        milestones: Optional[Sequence[Milestone]] = None,
+    ) -> list[IssueDraft]:
         """Parse *markdown_text* and return a list of :class:`IssueDraft` objects.
 
         The LLM is asked to return structured JSON matching the
@@ -169,17 +174,36 @@ class IssueFactory:
         ----------
         markdown_text:
             The full content of the requirements markdown document.
+        milestones:
+            Optional list of :class:`~git_review.models.Milestone` objects
+            fetched from the target repository.  When provided, their titles,
+            numbers, and descriptions are appended to the user message so the
+            LLM can assign each issue to the most relevant milestone by
+            setting the ``milestone`` field to the milestone's number.
         """
         logger.debug(
             "Parsing requirements document (%d chars) with %s",
             len(markdown_text),
             self._model,
         )
+
+        user_content = markdown_text
+        if milestones:
+            lines = [
+                "\n\n---\n**Available milestones** – assign each issue to the most "
+                "appropriate milestone by setting its `milestone` field to the "
+                "milestone number.  Leave `milestone` as null if no milestone fits.\n",
+            ]
+            for m in milestones:
+                desc = f" — {m.description}" if m.description else ""
+                lines.append(f"- #{m.number}: \"{m.title}\"{desc}")
+            user_content = markdown_text + "\n".join(lines)
+
         response = self._client.beta.chat.completions.parse(
             model=self._model,
             messages=[
                 {"role": "system", "content": self._system_prompt},
-                {"role": "user", "content": markdown_text},
+                {"role": "user", "content": user_content},
             ],
             response_format=IssueList,
         )

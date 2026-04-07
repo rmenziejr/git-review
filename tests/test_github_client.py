@@ -992,3 +992,95 @@ def test_list_milestones_with_no_due_date() -> None:
     assert len(milestones) == 1
     assert milestones[0].due_on is None
     assert milestones[0].description == ""
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.get_file_content
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_get_file_content_returns_decoded_text() -> None:
+    import base64
+    content = "# Requirements\n- Feature A\n- Feature B\n"
+    encoded = base64.b64encode(content.encode()).decode()
+    payload = {
+        "type": "file",
+        "encoding": "base64",
+        "content": encoded,
+        "name": "requirements.md",
+        "path": "docs/requirements.md",
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contents/docs/requirements.md",
+        json=payload,
+        status=200,
+    )
+    client = GitHubClient()
+    result = client.get_file_content("acme", "app", "docs/requirements.md")
+    assert result == content
+
+
+@responses_lib.activate
+def test_get_file_content_with_ref() -> None:
+    import base64
+    content = "# Reqs\n"
+    encoded = base64.b64encode(content.encode()).decode()
+    payload = {"type": "file", "encoding": "base64", "content": encoded}
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contents/docs/requirements.md",
+        json=payload,
+        status=200,
+        match_querystring=False,
+    )
+    client = GitHubClient()
+    result = client.get_file_content("acme", "app", "docs/requirements.md", ref="main")
+    assert result == content
+
+
+@responses_lib.activate
+def test_get_file_content_raises_for_directory() -> None:
+    payload = [{"type": "dir", "name": "docs"}]  # list = directory
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contents/docs",
+        json=payload,
+        status=200,
+    )
+    client = GitHubClient()
+    with pytest.raises(ValueError, match="not a file"):
+        client.get_file_content("acme", "app", "docs")
+
+
+@responses_lib.activate
+def test_get_file_content_raises_for_unknown_encoding() -> None:
+    import base64
+    payload = {"type": "file", "encoding": "none", "content": "raw text"}
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contents/docs/requirements.md",
+        json=payload,
+        status=200,
+    )
+    client = GitHubClient()
+    with pytest.raises(ValueError, match="Unexpected encoding"):
+        client.get_file_content("acme", "app", "docs/requirements.md")
+
+
+@responses_lib.activate
+def test_get_file_content_strips_leading_slash_from_path() -> None:
+    import base64
+    content = "hello"
+    encoded = base64.b64encode(content.encode()).decode()
+    payload = {"type": "file", "encoding": "base64", "content": encoded}
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/contents/docs/requirements.md",
+        json=payload,
+        status=200,
+    )
+    client = GitHubClient()
+    # Leading slash should be stripped silently
+    result = client.get_file_content("acme", "app", "/docs/requirements.md")
+    assert result == content

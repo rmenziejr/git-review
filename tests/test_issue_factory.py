@@ -304,3 +304,70 @@ def test_push_issues_no_milestone_passes_none() -> None:
 
     call = mock_gh.create_issue.call_args_list[0]
     assert call.kwargs["milestone"] is None
+
+
+# ---------------------------------------------------------------------------
+# IssueFactory.parse_requirements – milestone context
+# ---------------------------------------------------------------------------
+
+def test_parse_requirements_with_milestones_appends_context() -> None:
+    """When milestones are provided, their info should appear in the user message."""
+    from git_review.models import Milestone
+
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    milestones = [
+        Milestone(number=1, title="v1.0 Release", state="open", description="Initial release",
+                  repo="acme/app"),
+        Milestone(number=2, title="v2.0 Planning", state="open", description="",
+                  repo="acme/app"),
+    ]
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.parse_requirements("# Requirements", milestones=milestones)
+
+    openai_instance = mock_openai_cls.return_value
+    call_kwargs = openai_instance.beta.chat.completions.parse.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0]
+    user_msg = next(m["content"] for m in messages if m["role"] == "user")
+    assert "#1" in user_msg
+    assert "v1.0 Release" in user_msg
+    assert "#2" in user_msg
+    assert "v2.0 Planning" in user_msg
+    assert "Initial release" in user_msg
+
+
+def test_parse_requirements_with_empty_milestones_list_no_context() -> None:
+    """When an empty milestones list is provided, no milestone section is added."""
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    markdown = "# Requirements\n- Feature A"
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.parse_requirements(markdown, milestones=[])
+
+    openai_instance = mock_openai_cls.return_value
+    call_kwargs = openai_instance.beta.chat.completions.parse.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0]
+    user_msg = next(m["content"] for m in messages if m["role"] == "user")
+    # With no milestones, the user message should just be the raw markdown
+    assert user_msg == markdown
+
+
+def test_parse_requirements_without_milestones_unchanged() -> None:
+    """When milestones param is omitted (None), user message is the raw markdown."""
+    mock_openai_cls = _make_mock_openai_with_drafts([])
+    mock_gh = MagicMock()
+    markdown = "# Requirements\n- Feature A"
+
+    with patch("git_review.issue_factory.OpenAI", mock_openai_cls):
+        factory = IssueFactory(github_client=mock_gh, openai_api_key="sk-fake")
+        factory.parse_requirements(markdown)
+
+    openai_instance = mock_openai_cls.return_value
+    call_kwargs = openai_instance.beta.chat.completions.parse.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0]
+    user_msg = next(m["content"] for m in messages if m["role"] == "user")
+    assert user_msg == markdown

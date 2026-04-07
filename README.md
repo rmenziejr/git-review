@@ -63,6 +63,20 @@ pip install git-review
 pip install 'git-review[gradio]'
 ```
 
+### With uv (add to a project)
+
+Add directly from GitHub into your `uv`-managed project:
+
+```bash
+uv add git+https://github.com/rmenziejr/git-review.git
+```
+
+Including the Gradio web app extra:
+
+```bash
+uv add "git-review[gradio] @ git+https://github.com/rmenziejr/git-review.git"
+```
+
 ### With uvx (no install needed)
 
 Run directly from PyPI without installing into your environment:

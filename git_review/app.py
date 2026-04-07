@@ -380,10 +380,19 @@ def _submit_issues(
     github_token: str,
     repo: str,
     milestone_override: str,
-    draft_rows: list[list[Any]],
+    draft_rows: Any,
 ) -> str:
     if not repo or "/" not in repo:
         return "❌  Please enter the repository in 'owner/repo' format."
+
+    # Gradio may pass a pandas DataFrame when the input is a gr.Dataframe component.
+    try:
+        import pandas as pd
+        if isinstance(draft_rows, pd.DataFrame):
+            draft_rows = draft_rows.values.tolist()
+    except ImportError:
+        pass
+
     if not draft_rows:
         return "❌  No issue drafts to submit. Parse requirements first."
 

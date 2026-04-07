@@ -146,13 +146,25 @@ def _summarize_activity(
     until_str: str,
     author: str,
     system_prompt: str,
+    all_repos: bool = False,
 ) -> tuple[str, str]:
     """Fetch GitHub activity and return (summary_markdown, status_text)."""
-    if not repo or "/" not in repo:
-        return "", "❌  Please enter the repository in 'owner/repo' format."
+    repo = (repo or "").strip()
+    if not repo:
+        label = "owner name" if all_repos else "'owner/repo' format"
+        return "", f"❌  Please enter the repository in {label}."
 
-    parts = repo.strip().split("/", 1)
-    owner, repo_name = parts[0], parts[1]
+    if all_repos:
+        # Accept either "owner" or "owner/repo" – extract just the owner part.
+        owner = repo.split("/", 1)[0].strip()
+        if not owner:
+            return "", "❌  Please enter a valid owner name."
+        repo_label = "*"
+    else:
+        if "/" not in repo:
+            return "", "❌  Please enter the repository in 'owner/repo' format."
+        parts = repo.split("/", 1)
+        owner, repo_label = parts[0], parts[1]
 
     effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
     if not effective_key and not (base_url or "").strip():
@@ -187,42 +199,53 @@ def _summarize_activity(
         return "", "❌  'Since' date must be earlier than 'Until' date."
 
     gh = GitHubClient(token=github_token or None)
-    review_data = ReviewSummary(owner=owner, repo=repo_name, since=since, until=until)
+    review_data = ReviewSummary(owner=owner, repo=repo_label, since=since, until=until)
     errors: list[str] = []
 
-    for fetch_fn, label in (
-        (
-            lambda: gh.get_commits(
-                owner, repo_name, since, until,
-                author=author.strip() or None,
-                include_stats=True,
-            ),
-            "commits",
-        ),
-        (lambda: gh.get_issues(owner, repo_name, since, until), "issues"),
-        (
-            lambda: gh.get_pull_requests(
-                owner, repo_name, since, until, include_details=True
-            ),
-            "pull requests",
-        ),
-        (lambda: gh.get_releases(owner, repo_name, since, until), "releases"),
-        (lambda: gh.get_contributors(owner, repo_name), "contributors"),
-    ):
+    if all_repos:
         try:
-            results = fetch_fn()
-            if label == "commits":
-                review_data.commits = results
-            elif label == "issues":
-                review_data.issues = results
-            elif label == "pull requests":
-                review_data.pull_requests = results
-            elif label == "releases":
-                review_data.releases = results
-            elif label == "contributors":
-                review_data.contributors = results
+            repo_names = gh.list_repos(owner)
         except Exception as exc:
-            errors.append(f"⚠️  Could not fetch {label}: {exc}")
+            return "", f"❌  Could not list repositories for '{owner}': {exc}"
+        if not repo_names:
+            return "", f"⚠️  No non-archived repositories found for '{owner}'."
+    else:
+        repo_names = [repo_label]
+
+    for repo_name in repo_names:
+        for fetch_fn, data_label in (
+            (
+                lambda rn=repo_name: gh.get_commits(
+                    owner, rn, since, until,
+                    author=author.strip() or None,
+                    include_stats=True,
+                ),
+                "commits",
+            ),
+            (lambda rn=repo_name: gh.get_issues(owner, rn, since, until), "issues"),
+            (
+                lambda rn=repo_name: gh.get_pull_requests(
+                    owner, rn, since, until, include_details=True
+                ),
+                "pull requests",
+            ),
+            (lambda rn=repo_name: gh.get_releases(owner, rn, since, until), "releases"),
+            (lambda rn=repo_name: gh.get_contributors(owner, rn), "contributors"),
+        ):
+            try:
+                results = fetch_fn()
+                if data_label == "commits":
+                    review_data.commits += results
+                elif data_label == "issues":
+                    review_data.issues += results
+                elif data_label == "pull requests":
+                    review_data.pull_requests += results
+                elif data_label == "releases":
+                    review_data.releases += results
+                elif data_label == "contributors":
+                    review_data.contributors += results
+            except Exception as exc:
+                errors.append(f"⚠️  Could not fetch {data_label} for {owner}/{repo_name}: {exc}")
 
     try:
         llm = LLMClient(
@@ -235,10 +258,11 @@ def _summarize_activity(
     except Exception as exc:
         return "", f"❌  Error generating summary: {exc}"
 
-    status = (
-        f"✅  Summary generated for {owner}/{repo_name} "
-        f"({since.date()} → {until.date()})."
-    )
+    if all_repos:
+        repo_display = f"{owner}/* ({len(repo_names)} repos)"
+    else:
+        repo_display = f"{owner}/{repo_label}"
+    status = f"✅  Summary generated for {repo_display} ({since.date()} → {until.date()})."
     if errors:
         status += "\n" + "\n".join(errors)
     return summary_text, status
@@ -469,9 +493,14 @@ def build_app() -> gr.Blocks:
                 )
                 with gr.Row():
                     sum_repo = gr.Textbox(
-                        label="Repository (owner/repo)",
+                        label="Repository (owner/repo) or Owner",
                         placeholder="myorg/myrepo",
                     )
+                    sum_all_repos = gr.Checkbox(
+                        label="Summarize all repositories for this owner",
+                        value=False,
+                    )
+                with gr.Row():
                     sum_author = gr.Textbox(
                         label="Filter commits by author (optional)",
                         placeholder="github-username",
@@ -510,7 +539,7 @@ def build_app() -> gr.Blocks:
                     inputs=[
                         github_token, openai_key, model, base_url,
                         sum_repo, sum_days, sum_since, sum_until,
-                        sum_author, sum_prompt,
+                        sum_author, sum_prompt, sum_all_repos,
                     ],
                     outputs=[sum_output, sum_status],
                 )

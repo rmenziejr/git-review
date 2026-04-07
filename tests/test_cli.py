@@ -1341,3 +1341,194 @@ def test_create_issues_prompt_file_invalid_template_exits_with_error() -> None:
 
     assert result.exit_code != 0
     assert "unknown variable" in result.output
+
+
+# ---------------------------------------------------------------------------
+# create-issues – fetch requirements from repo (--requirements-path)
+# ---------------------------------------------------------------------------
+
+def test_create_issues_fetches_requirements_from_repo_when_no_local_file() -> None:
+    """Without --requirements, the CLI should fetch docs/requirements.md from the repo."""
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Fetched Issue", body="Body"),
+    ]
+    mock_factory_cls.return_value.push_issues.return_value = [
+        {"number": 1, "html_url": "https://github.com/acme/app/issues/1"},
+    ]
+
+    mock_gh_cls = MagicMock()
+    mock_gh_instance = mock_gh_cls.return_value
+    mock_gh_instance.get_file_content.return_value = "# Requirements\n- Feature A\n"
+
+    with patch("git_review.cli.GitHubClient", mock_gh_cls):
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--openai-key", "sk-fake",
+                    "--yes",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    mock_gh_instance.get_file_content.assert_called_once_with(
+        "acme", "app", "docs/requirements.md"
+    )
+    mock_factory_cls.return_value.parse_requirements.assert_called_once()
+
+
+def test_create_issues_custom_requirements_path() -> None:
+    """--requirements-path overrides the default docs/requirements.md."""
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Issue", body="Body"),
+    ]
+    mock_factory_cls.return_value.push_issues.return_value = [
+        {"number": 1, "html_url": ""},
+    ]
+
+    mock_gh_cls = MagicMock()
+    mock_gh_instance = mock_gh_cls.return_value
+    mock_gh_instance.get_file_content.return_value = "# Reqs\n- A\n"
+
+    with patch("git_review.cli.GitHubClient", mock_gh_cls):
+        with patch("git_review.cli.IssueFactory", mock_factory_cls):
+            result = runner.invoke(
+                main,
+                [
+                    "create-issues",
+                    "--repo", "acme/app",
+                    "--openai-key", "sk-fake",
+                    "--requirements-path", "specs/features.md",
+                    "--yes",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    mock_gh_instance.get_file_content.assert_called_once_with(
+        "acme", "app", "specs/features.md"
+    )
+
+
+def test_create_issues_fetch_requirements_error_exits() -> None:
+    """When fetching from the repo fails, the CLI exits with a non-zero code."""
+    import requests
+
+    runner = CliRunner()
+    mock_gh_cls = MagicMock()
+    mock_gh_instance = mock_gh_cls.return_value
+    mock_gh_instance.get_file_content.side_effect = Exception("404 Not Found")
+
+    with patch("git_review.cli.GitHubClient", mock_gh_cls):
+        result = runner.invoke(
+            main,
+            [
+                "create-issues",
+                "--repo", "acme/app",
+                "--openai-key", "sk-fake",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "Error fetching requirements" in result.output
+
+
+# ---------------------------------------------------------------------------
+# create-issues – --use-milestones flag
+# ---------------------------------------------------------------------------
+
+def test_create_issues_use_milestones_fetches_and_passes_to_factory() -> None:
+    """--use-milestones should fetch milestones and pass them to parse_requirements."""
+    from git_review.issue_factory import IssueDraft
+    from git_review.models import Milestone
+
+    runner = CliRunner()
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Issue A", body="Body", milestone=1),
+    ]
+    mock_factory_cls.return_value.push_issues.return_value = [
+        {"number": 1, "html_url": ""},
+    ]
+
+    mock_gh_cls = MagicMock()
+    mock_gh_instance = mock_gh_cls.return_value
+    fake_milestones = [
+        Milestone(number=1, title="v1.0", state="open", repo="acme/app"),
+    ]
+    mock_gh_instance.list_milestones.return_value = fake_milestones
+
+    with runner.isolated_filesystem():
+        with open("reqs.md", "w") as fh:
+            fh.write("# Reqs\n- Feature A\n")
+        with patch("git_review.cli.GitHubClient", mock_gh_cls):
+            with patch("git_review.cli.IssueFactory", mock_factory_cls):
+                result = runner.invoke(
+                    main,
+                    [
+                        "create-issues",
+                        "--repo", "acme/app",
+                        "--requirements", "reqs.md",
+                        "--openai-key", "sk-fake",
+                        "--use-milestones",
+                        "--yes",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    mock_gh_instance.list_milestones.assert_called_once_with("acme", "app", state="open")
+    call_args = mock_factory_cls.return_value.parse_requirements.call_args
+    passed_milestones = call_args.kwargs.get("milestones") or (
+        call_args.args[1] if len(call_args.args) > 1 else None
+    )
+    assert passed_milestones == fake_milestones
+
+
+def test_create_issues_use_milestones_no_milestones_continues() -> None:
+    """When --use-milestones finds no milestones, the command continues normally."""
+    from git_review.issue_factory import IssueDraft
+
+    runner = CliRunner()
+    mock_factory_cls = MagicMock()
+    mock_factory_cls.return_value.parse_requirements.return_value = [
+        IssueDraft(title="Issue A", body="Body"),
+    ]
+    mock_factory_cls.return_value.push_issues.return_value = [{"number": 1, "html_url": ""}]
+
+    mock_gh_cls = MagicMock()
+    mock_gh_instance = mock_gh_cls.return_value
+    mock_gh_instance.list_milestones.return_value = []
+
+    with runner.isolated_filesystem():
+        with open("reqs.md", "w") as fh:
+            fh.write("# Reqs\n")
+        with patch("git_review.cli.GitHubClient", mock_gh_cls):
+            with patch("git_review.cli.IssueFactory", mock_factory_cls):
+                result = runner.invoke(
+                    main,
+                    [
+                        "create-issues",
+                        "--repo", "acme/app",
+                        "--requirements", "reqs.md",
+                        "--openai-key", "sk-fake",
+                        "--use-milestones",
+                        "--yes",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    # parse_requirements should still be called, just with milestones=None
+    call_args = mock_factory_cls.return_value.parse_requirements.call_args
+    passed_milestones = call_args.kwargs.get("milestones") or (
+        call_args.args[1] if len(call_args.args) > 1 else None
+    )
+    assert not passed_milestones

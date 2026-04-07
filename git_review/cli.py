@@ -632,10 +632,25 @@ def _print_contributors_table(
 @click.option(
     "--requirements",
     "requirements_file",
-    required=True,
+    required=False,
+    default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True),
     metavar="FILE",
-    help="Path to a markdown file containing requirements.",
+    help=(
+        "Path to a local markdown file containing requirements.  "
+        "When omitted, the file at --requirements-path is fetched from the GitHub repo."
+    ),
+)
+@click.option(
+    "--requirements-path",
+    "requirements_path",
+    default="docs/requirements.md",
+    show_default=True,
+    metavar="PATH",
+    help=(
+        "Path within the GitHub repo to the requirements file.  "
+        "Used only when --requirements is not provided."
+    ),
 )
 @click.option(
     "--token",
@@ -684,6 +699,16 @@ def _print_contributors_table(
     help="Milestone number to attach to every created issue.",
 )
 @click.option(
+    "--use-milestones",
+    "use_milestones",
+    is_flag=True,
+    default=False,
+    help=(
+        "Fetch open milestones from the repo and include them in the LLM prompt "
+        "so the AI can assign each issue to the most relevant milestone."
+    ),
+)
+@click.option(
     "--prompt-file",
     "-p",
     "prompt_file",
@@ -702,7 +727,8 @@ def _print_contributors_table(
 )
 def create_issues(
     repo: str,
-    requirements_file: str,
+    requirements_file: Optional[str],
+    requirements_path: str,
     token: Optional[str],
     openai_key: Optional[str],
     model: str,
@@ -710,13 +736,19 @@ def create_issues(
     yes: bool,
     dry_run: bool,
     milestone_number: Optional[int],
+    use_milestones: bool,
     prompt_file: Optional[str],
     verbose: bool,
 ) -> None:
     """Parse a markdown requirements file and create GitHub issues.
 
-    Reads REQUIREMENTS_FILE, uses an LLM to extract individual requirements as
-    issue drafts, lets you review them, then creates them in OWNER/REPO.
+    Reads a requirements markdown document, uses an LLM to extract individual
+    requirements as issue drafts, lets you review them, then creates them in
+    OWNER/REPO.
+
+    The requirements document can be supplied as a local file (--requirements)
+    or fetched automatically from the GitHub repository at the path given by
+    --requirements-path (default: docs/requirements.md).
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -732,8 +764,39 @@ def create_issues(
             "An OpenAI API key is required. Pass --openai-key or set OPENAI_API_KEY."
         )
 
-    with open(requirements_file, encoding="utf-8") as fh:
-        markdown_text = fh.read()
+    gh = GitHubClient(token=token)
+
+    # ------------------------------------------------------------------
+    # Load requirements markdown
+    # ------------------------------------------------------------------
+    if requirements_file:
+        with open(requirements_file, encoding="utf-8") as fh:
+            markdown_text = fh.read()
+    else:
+        console.print(
+            f"[bold green]Fetching requirements from {owner}/{repo_name}:{requirements_path}…[/bold green]"
+        )
+        try:
+            markdown_text = gh.get_file_content(owner, repo_name, requirements_path)
+        except Exception as exc:
+            console.print(f"[red]Error fetching requirements from repo:[/red] {exc}")
+            sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # Optionally fetch milestones
+    # ------------------------------------------------------------------
+    milestones = None
+    if use_milestones:
+        with console.status("[bold green]Fetching milestones…"):
+            try:
+                milestones = gh.list_milestones(owner, repo_name, state="open")
+            except Exception as exc:
+                console.print(f"[yellow]Warning: could not fetch milestones:[/yellow] {exc}")
+                milestones = None
+        if milestones:
+            console.print(f"[dim]Found {len(milestones)} open milestone(s) – passing to LLM.[/dim]")
+        else:
+            console.print("[dim]No open milestones found.[/dim]")
 
     custom_prompt: Optional[str] = None
     if prompt_file:
@@ -742,8 +805,6 @@ def create_issues(
         except OSError as exc:
             console.print(f"[red]Error reading prompt file:[/red] {exc}")
             sys.exit(1)
-
-    gh = GitHubClient(token=token)
 
     with console.status("[bold green]Parsing requirements with LLM…"):
         try:
@@ -754,7 +815,7 @@ def create_issues(
                 base_url=base_url,
                 system_prompt=custom_prompt,
             )
-            drafts = factory.parse_requirements(markdown_text)
+            drafts = factory.parse_requirements(markdown_text, milestones=milestones)
         except Exception as exc:
             console.print(f"[red]Error parsing requirements:[/red] {exc}")
             sys.exit(1)

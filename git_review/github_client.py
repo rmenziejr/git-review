@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -104,6 +105,53 @@ class GitHubClient:
             else:
                 raise
         return [item["name"] for item in raw if not item.get("archived", False)]
+
+    def get_file_content(
+        self,
+        owner: str,
+        repo: str,
+        path: str,
+        ref: Optional[str] = None,
+    ) -> str:
+        """Return the decoded text content of a file in *repo*.
+
+        Uses the GitHub Contents API.  Only files up to 1 MB are supported
+        (GitHub returns base64-encoded content for files in that range).
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        path:
+            Path to the file within the repository (e.g. ``"docs/requirements.md"``).
+        ref:
+            Optional Git ref (branch, tag, or commit SHA) to read from.
+            Defaults to the repository's default branch.
+
+        Raises
+        ------
+        requests.HTTPError
+            If the file does not exist or the API call fails.
+        ValueError
+            If the API response does not contain a base64-encoded file.
+        """
+        params: dict[str, Any] = {}
+        if ref:
+            params["ref"] = ref
+        data = self._get(f"repos/{owner}/{repo}/contents/{path.lstrip('/')}", **params)
+        if not isinstance(data, dict) or data.get("type") != "file":
+            raise ValueError(
+                f"'{path}' is not a file in {owner}/{repo} "
+                "(it may be a directory or does not exist)."
+            )
+        encoding = data.get("encoding", "")
+        if encoding != "base64":
+            raise ValueError(
+                f"Unexpected encoding '{encoding}' for '{path}' in {owner}/{repo}. "
+                "Only base64-encoded files are supported."
+            )
+        raw = data.get("content", "")
+        return base64.b64decode(raw).decode("utf-8")
 
     def get_commits(
         self,

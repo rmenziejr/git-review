@@ -697,7 +697,7 @@ def build_app() -> gr.Blocks:
                         _parse_requirements(
                             gh_tok, oai_key, mdl, burl, rtxt, rfile,
                             use_ms,
-                            (ms_repo or "").strip() or (fr_repo or "").strip(),
+                            _resolve_milestones_repo(ms_repo, fr_repo),
                         )
                     ),
                     inputs=[

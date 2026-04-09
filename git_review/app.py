@@ -347,6 +347,9 @@ def _list_milestones(github_token: str, repo: str, state: str) -> str:
 
 _DRAFT_COLUMNS = ["#", "Title", "Body", "Labels", "Assignees", "Milestone #"]
 
+# Column widths (px): give Body the bulk of the space so the content is readable.
+_DRAFT_COLUMN_WIDTHS = ["50px", "200px", "500px", "150px", "150px", "100px"]
+
 _EMPTY_TABLE: list[list[Any]] = []
 
 
@@ -707,7 +710,9 @@ def build_app() -> gr.Blocks:
                 drafts_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
+                    column_widths=_DRAFT_COLUMN_WIDTHS,
                     wrap=True,
+                    height=400,
                 )
 
                 def _resolve_milestones_repo(milestones_repo_val: str, fetch_repo_val: str) -> str:
@@ -755,7 +760,9 @@ def build_app() -> gr.Blocks:
                 submit_table = gr.Dataframe(
                     headers=_DRAFT_COLUMNS,
                     datatype=["number", "str", "str", "str", "str", "str"],
+                    column_widths=_DRAFT_COLUMN_WIDTHS,
                     wrap=True,
+                    height=400,
                 )
 
                 gr.Markdown(

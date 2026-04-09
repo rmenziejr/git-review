@@ -63,8 +63,8 @@ Each issue must have:
 "Implement").
 - A body written in GitHub Markdown that includes:
   - A short description of the work to be done.
-  - A "Key Results" section with a checklist of measurable, verifiable \
-outcomes that confirm the issue is complete.
+  - A "Sub-tasks" section with a checklist of concrete, independently \
+completable steps required to deliver the issue.
 - A list of relevant labels from: bug, enhancement, documentation, \
 question, help wanted, good first issue.
 - An optional list of GitHub usernames to assign (leave empty if none are \
@@ -82,7 +82,7 @@ class IssueDraft(BaseModel):
         ...,
         description=(
             "Full issue body in GitHub Markdown, including description and "
-            "key results checklist."
+            "sub-tasks checklist."
         ),
     )
     labels: list[str] = Field(

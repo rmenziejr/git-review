@@ -177,7 +177,7 @@ def _build_user_message(summary: ReviewSummary) -> str:
                 label_str = ", ".join(pr.labels) if pr.labels else "—"
                 reviewers_str = (
                     ", ".join(
-                        f"{login}({count})"
+                        f"{login}({count} comment{'s' if count != 1 else ''})"
                         for login, count in sorted(
                             pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
                         )

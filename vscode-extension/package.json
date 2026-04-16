@@ -55,18 +55,30 @@
           "patternErrorMessage": "Must be in 'owner/repo' format.",
           "order": 4
         },
+        "gitReview.defaultOwner": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default GitHub owner (user/org) for owner-only review runs. Used when `gitReview.defaultRepo` is empty.",
+          "order": 5
+        },
+        "gitReview.reviewAuthor": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional commit author filter for **Review Repository**. Passed to the CLI as `--author`.",
+          "order": 6
+        },
         "gitReview.model": {
           "type": "string",
           "default": "gpt-4o-mini",
           "markdownDescription": "LLM model to use for all AI operations (summarisation, commit-message, issue generation). Equivalent to the `GIT_REVIEW_MODEL` environment variable.",
-          "order": 5
+          "order": 7
         },
         "gitReview.defaultDays": {
           "type": "number",
           "default": 7,
           "minimum": 1,
           "markdownDescription": "Number of days to look back when running **Review Repository** without an explicit date range.",
-          "order": 6
+          "order": 8
         }
       }
     },

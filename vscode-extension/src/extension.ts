@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import * as path from "path";
 
 /**
  * Read all git-review settings from VS Code configuration and return them as
@@ -10,6 +9,8 @@ function getConfig(): {
   openaiApiKey: string;
   openaiBaseUrl: string;
   defaultRepo: string;
+  defaultOwner: string;
+  reviewAuthor: string;
   model: string;
   defaultDays: number;
 } {
@@ -19,6 +20,8 @@ function getConfig(): {
     openaiApiKey: cfg.get<string>("openaiApiKey", ""),
     openaiBaseUrl: cfg.get<string>("openaiBaseUrl", ""),
     defaultRepo: cfg.get<string>("defaultRepo", ""),
+    defaultOwner: cfg.get<string>("defaultOwner", ""),
+    reviewAuthor: cfg.get<string>("reviewAuthor", ""),
     model: cfg.get<string>("model", "gpt-4o-mini"),
     defaultDays: cfg.get<number>("defaultDays", 7),
   };
@@ -62,7 +65,7 @@ function shellQuote(value: string): string {
 function runInTerminal(command: string): void {
   const existingTerminals = vscode.window.terminals;
   let terminal =
-    existingTerminals.find((t) => t.name === "git-review") ??
+    existingTerminals.find((t: vscode.Terminal) => t.name === "git-review") ??
     vscode.window.createTerminal("git-review");
   terminal.show(/* preserveFocus */ false);
   terminal.sendText(command);
@@ -75,14 +78,16 @@ function runInTerminal(command: string): void {
 async function reviewRepository(): Promise<void> {
   const cfg = getConfig();
 
-  let repo = cfg.defaultRepo;
-  if (!repo) {
+  let repo = cfg.defaultRepo.trim();
+  let owner = cfg.defaultOwner.trim();
+
+  if (!repo && !owner) {
     const input = await vscode.window.showInputBox({
       title: "Git Review: Review Repository",
       prompt:
         "Enter the GitHub repository to review (owner/repo), or leave blank to review by owner.",
       placeHolder: "owner/repo",
-      validateInput: (value) => {
+      validateInput: (value: string) => {
         if (!value) {
           return null; // blank → will ask for owner instead
         }
@@ -96,6 +101,24 @@ async function reviewRepository(): Promise<void> {
       return; // user cancelled
     }
     repo = input.trim();
+
+    if (!repo) {
+      const ownerInput = await vscode.window.showInputBox({
+        title: "Git Review: Review Owner",
+        prompt: "Enter the GitHub user or organization name to review all repos.",
+        placeHolder: "my-org",
+        validateInput: (value: string) => {
+          if (!value || !value.trim()) {
+            return "Owner is required.";
+          }
+          return null;
+        },
+      });
+      if (!ownerInput || !ownerInput.trim()) {
+        return; // user cancelled or empty
+      }
+      owner = ownerInput.trim();
+    }
   }
 
   const args: string[] = ["git-review", "review"];
@@ -103,22 +126,11 @@ async function reviewRepository(): Promise<void> {
   if (repo) {
     args.push(`--repo ${shellQuote(repo)}`);
   } else {
-    // Prompt for an owner when repo is empty
-    const owner = await vscode.window.showInputBox({
-      title: "Git Review: Review Owner",
-      prompt: "Enter the GitHub user or organisation name to review all repos.",
-      placeHolder: "my-org",
-      validateInput: (value) => {
-        if (!value || !value.trim()) {
-          return "Owner is required.";
-        }
-        return null;
-      },
-    });
-    if (!owner || !owner.trim()) {
-      return; // user cancelled or empty
-    }
-    args.push(`--owner ${shellQuote(owner.trim())}`);
+    args.push(`--owner ${shellQuote(owner)}`);
+  }
+
+  if (cfg.reviewAuthor.trim()) {
+    args.push(`--author ${shellQuote(cfg.reviewAuthor.trim())}`);
   }
 
   args.push(`--days ${cfg.defaultDays}`);
@@ -190,7 +202,7 @@ async function createIssues(): Promise<void> {
       title: "Git Review: Create Issues",
       prompt: "Enter the target GitHub repository (owner/repo).",
       placeHolder: "owner/repo",
-      validateInput: (value) => {
+      validateInput: (value: string) => {
         if (!value || !value.trim()) {
           return "Repository is required.";
         }

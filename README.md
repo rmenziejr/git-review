@@ -325,6 +325,8 @@ Open **File → Preferences → Settings** and search for **"git review"**.
 | `gitReview.openaiApiKey` | OpenAI API key | `--openai-key` / `OPENAI_API_KEY` |
 | `gitReview.openaiBaseUrl` | Custom OpenAI-compatible base URL | `--base-url` / `OPENAI_BASE_URL` |
 | `gitReview.defaultRepo` | Default repository (`owner/repo`) | `--repo` / `GITREVIEW_REPO` |
+| `gitReview.defaultOwner` | Default owner/user for owner-only review runs (used when `defaultRepo` is empty) | `--owner` |
+| `gitReview.reviewAuthor` | Optional commit author filter for review runs | `--author` |
 | `gitReview.model` | LLM model (default: `gpt-4o-mini`) | `--model` |
 | `gitReview.defaultDays` | Days to look back (default: `7`) | `--days` |
 
@@ -363,6 +365,10 @@ for repo_name in all_repos:
 llm = LLMClient(api_key="sk-xxx")
 text = llm.summarise(summary_all)
 print(text)
+
+# Render the same Rich tables used by the CLI:
+from git_review import render_review_tables
+render_review_tables(summary_all)
 ```
 
 ### SDK reference
@@ -427,4 +433,3 @@ uv run pytest tests/ -v
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-

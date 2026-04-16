@@ -107,6 +107,17 @@ class Milestone:
 
 
 @dataclass
+class AuthorSummary:
+    """Activity for a single author partitioned out of a :class:`ReviewSummary`."""
+
+    author: str
+    commits: list[Commit] = field(default_factory=list)
+    issues: list[Issue] = field(default_factory=list)
+    pull_requests: list[PullRequest] = field(default_factory=list)
+    releases: list[Release] = field(default_factory=list)
+
+
+@dataclass
 class ReviewSummary:
     """The aggregated result returned to callers and the CLI."""
 

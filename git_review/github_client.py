@@ -161,6 +161,7 @@ class GitHubClient:
         until: datetime,
         author: Optional[str] = None,
         include_stats: bool = False,
+        branch: Optional[str] = None,
     ) -> list[Commit]:
         """Return commits in *repo* between *since* and *until* (inclusive).
 
@@ -180,6 +181,15 @@ class GitHubClient:
             When *True*, fetch each commit's detail endpoint to populate
             ``additions`` and ``deletions``.  This makes one extra API call per
             commit, so use with awareness of rate limits.
+        branch:
+            Which branch(es) to include.
+
+            * ``None`` (default) – GitHub's default branch (usually *main*).
+            * ``"*"`` – every branch in the repository; commits are
+              deduplicated by SHA so a commit reachable from multiple branches
+              is only counted once.
+            * Any other string – that specific branch name (passed as the
+              ``sha`` query parameter to the GitHub API).
         """
         params: dict[str, Any] = {
             "since": _to_iso(since),
@@ -188,7 +198,34 @@ class GitHubClient:
         if author:
             params["author"] = author
 
-        raw = self._paginate(f"repos/{owner}/{repo}/commits", **params)
+        if branch == "*":
+            branch_names = [
+                b["name"]
+                for b in self._paginate(f"repos/{owner}/{repo}/branches")
+            ]
+            raw_by_sha: dict[str, dict] = {}
+            for branch_name in branch_names:
+                for item in self._paginate(
+                    f"repos/{owner}/{repo}/commits", sha=branch_name, **params
+                ):
+                    raw_by_sha.setdefault(item["sha"], item)
+            raw = list(raw_by_sha.values())
+        else:
+            if branch:
+                params["sha"] = branch
+            raw = self._paginate(f"repos/{owner}/{repo}/commits", **params)
+
+        return self._build_commits(owner, repo, raw, include_stats=include_stats)
+
+    def _build_commits(
+        self,
+        owner: str,
+        repo: str,
+        raw: list[dict],
+        *,
+        include_stats: bool,
+    ) -> list[Commit]:
+        """Convert raw API dicts to :class:`Commit` objects."""
         commits: list[Commit] = []
         for item in raw:
             commit = item.get("commit", {})

@@ -189,6 +189,95 @@ def test_get_commits_http_error_raises() -> None:
         client.get_commits("acme", "app", SINCE, UNTIL)
 
 
+@responses_lib.activate
+def test_get_commits_specific_branch() -> None:
+    """Passing branch='feature-x' forwards sha=feature-x to the API."""
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    client.get_commits("acme", "app", SINCE, UNTIL, branch="feature-x")
+
+    assert "sha=feature-x" in responses_lib.calls[0].request.url
+
+
+@responses_lib.activate
+def test_get_commits_all_branches_deduplicates() -> None:
+    """branch='*' fetches per-branch and deduplicates commits sharing a SHA."""
+    commit_on_both = {
+        "sha": "shared111",
+        "commit": {
+            "message": "shared commit",
+            "author": {"name": "Alice", "date": "2024-01-05T08:00:00Z"},
+        },
+        "html_url": "https://github.com/acme/app/commit/shared111",
+        "author": {"login": "alice"},
+    }
+    commit_only_on_feature = {
+        "sha": "feature222",
+        "commit": {
+            "message": "feature-only commit",
+            "author": {"name": "Bob", "date": "2024-01-06T08:00:00Z"},
+        },
+        "html_url": "https://github.com/acme/app/commit/feature222",
+        "author": {"login": "bob"},
+    }
+
+    # Branch listing (2 items < 100 per_page → pagination stops after first page)
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/branches",
+        json=[{"name": "main"}, {"name": "feature-x"}],
+        status=200,
+    )
+
+    # Commits on main (1 item < 100 → pagination stops after first page)
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[commit_on_both],
+        status=200,
+    )
+
+    # Commits on feature-x (2 items < 100 → pagination stops after first page)
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[commit_on_both, commit_only_on_feature],
+        status=200,
+    )
+
+    client = GitHubClient()
+    commits = client.get_commits("acme", "app", SINCE, UNTIL, branch="*")
+
+    shas = {c.sha for c in commits}
+    assert shas == {"shared111", "feature222"}, (
+        "Shared commit should appear exactly once; feature-only commit included"
+    )
+    assert len(commits) == 2
+
+
+@responses_lib.activate
+def test_get_commits_all_branches_default_is_default_branch() -> None:
+    """When branch=None the branches endpoint is NOT called."""
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/commits",
+        json=[],
+        status=200,
+    )
+
+    client = GitHubClient()
+    client.get_commits("acme", "app", SINCE, UNTIL, branch=None)
+
+    called_paths = [call.request.path_url.split("?")[0] for call in responses_lib.calls]
+    assert "/repos/acme/app/branches" not in called_paths
+
+
 # ---------------------------------------------------------------------------
 # GitHubClient.get_issues
 # ---------------------------------------------------------------------------

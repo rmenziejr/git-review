@@ -40,6 +40,7 @@ from .issue_factory import IssueFactory, IssueDraft
 from .llm_client import LLMClient
 from .models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
 from .prompt_utils import load_prompt_file, validate_prompt_template
+from .tables import render_review_tables
 
 console = Console()
 
@@ -124,6 +125,16 @@ def main() -> None:
     help="Filter commits by this GitHub username.",
 )
 @click.option(
+    "--branch",
+    default=None,
+    metavar="BRANCH",
+    help=(
+        "Branch to fetch commits from. "
+        "Use '*' for all branches (deduplicated by SHA). "
+        "Defaults to the repository's default branch."
+    ),
+)
+@click.option(
     "--openai-key",
     envvar="OPENAI_API_KEY",
     default=None,
@@ -181,6 +192,7 @@ def review(
     until_str: Optional[str],
     days: int,
     author: Optional[str],
+    branch: Optional[str],
     openai_key: Optional[str],
     model: Optional[str],
     base_url: Optional[str],
@@ -264,7 +276,7 @@ def review(
             try:
                 review_data.commits += gh.get_commits(
                     resolved_owner, repo_name, since, until, author=author,
-                    include_stats=True,
+                    include_stats=True, branch=branch,
                 )
             except Exception as exc:
                 console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")
@@ -296,14 +308,7 @@ def review(
                 console.print(f"[yellow]  Skipping contributors for {repo_name}:[/yellow] {exc}")
 
     # --- Print rich tables ------------------------------------------
-    _print_header(resolved_owner, repo_label, since, until)
-    _print_commits_table(review_data.commits, show_repo=all_repos_mode)
-    _print_repo_stats_table(review_data.commits)
-    _print_issues_table(review_data.issues, show_repo=all_repos_mode)
-    _print_issue_days_open_stats_table(review_data.issues)
-    _print_prs_table(review_data.pull_requests, show_repo=all_repos_mode)
-    _print_releases_table(review_data.releases, show_repo=all_repos_mode)
-    _print_contributors_table(review_data.contributors, show_repo=all_repos_mode)
+    render_review_tables(review_data, console=console)
 
     # --- LLM summarisation ------------------------------------------
     if no_summary:

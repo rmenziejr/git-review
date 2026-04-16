@@ -249,7 +249,7 @@ def test_review_owner_lists_and_scans_all_repos() -> None:
         )
     ]
 
-    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False):
+    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False, branch=None):
         return commits_app if repo == "app" else commits_api
 
     mock_gh = MagicMock()
@@ -359,7 +359,7 @@ def test_review_repo_stats_aggregates_per_repo() -> None:
         )
     ]
 
-    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False):
+    def side_effect_commits(owner, repo, since, until, author=None, include_stats=False, branch=None):
         return commits_app if repo == "app" else commits_api
 
     mock_gh = MagicMock()

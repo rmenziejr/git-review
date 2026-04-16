@@ -21,6 +21,7 @@ from .prompt_utils import render_prompt, validate_prompt_template
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
+_DEFAULT_TEXT_SNIPPET_MAX_LEN = 140
 
 _PROMPT_VARS: set[str] = {"n", "n_commits", "n_issues", "n_prs"}
 
@@ -90,7 +91,7 @@ A concise 2–4 sentence overview of:
 """
 
 
-def _trim_text(text: str, max_len: int = 140) -> str:
+def _trim_text(text: str, max_len: int = _DEFAULT_TEXT_SNIPPET_MAX_LEN) -> str:
     cleaned = re.sub(r"\s+", " ", (text or "").strip())
     if len(cleaned) <= max_len:
         return cleaned
@@ -99,6 +100,8 @@ def _trim_text(text: str, max_len: int = 140) -> str:
 
 def _build_user_message(summary: ReviewSummary) -> str:
     repo_label = "all repositories" if summary.repo == "*" else f"{summary.owner}/{summary.repo}"
+    default_repo = f"{summary.owner}/{summary.repo}" if summary.repo != "*" else None
+    fallback_repos = {default_repo} if default_repo else set()
     repos_in_data = {
         c.repo for c in summary.commits
     } | {
@@ -110,7 +113,7 @@ def _build_user_message(summary: ReviewSummary) -> str:
     } | {
         c.repo for c in summary.contributors
     }
-    repo_names = sorted(repos_in_data or ({f"{summary.owner}/{summary.repo}"} if summary.repo != "*" else set()))
+    repo_names = sorted(repos_in_data or fallback_repos)
 
     lines: list[str] = [
         f"Repository: {repo_label}",

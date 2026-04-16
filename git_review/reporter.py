@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .github_client import GitHubClient
-from .models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
+from .models import AuthorSummary, Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
 
 _DAYS_OPEN_BUCKETS: list[tuple[str, int | None]] = [
     ("0–7 days", 7),
@@ -147,7 +147,11 @@ class ReviewReporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def to_markdown(summary: ReviewSummary) -> str:
+    def to_markdown(
+        summary: ReviewSummary,
+        *,
+        include_author_summaries: bool = True,
+    ) -> str:
         """Render *summary* as a GFM Markdown report.
 
         The output mirrors the table sections produced by the CLI but in
@@ -159,6 +163,9 @@ class ReviewReporter:
         summary:
             A :class:`~git_review.models.ReviewSummary` obtained from
             :meth:`fetch` or built manually.
+        include_author_summaries:
+            When *True* (default), append a **By Author** section that breaks
+            down commits, issues, PRs, and releases per contributor.
 
         Returns
         -------
@@ -177,7 +184,77 @@ class ReviewReporter:
         parts.append(_md_releases(summary.releases, show_repo=show_repo))
         parts.append(_md_contributors(summary.contributors))
 
+        if include_author_summaries:
+            author_summaries = ReviewReporter.partition_by_author(summary)
+            if author_summaries:
+                parts.append(ReviewReporter.author_summaries_to_markdown(author_summaries))
+
         return "\n\n".join(section for section in parts if section)
+
+    @staticmethod
+    def partition_by_author(summary: ReviewSummary) -> dict[str, AuthorSummary]:
+        """Partition *summary* activity into per-author slices.
+
+        Commits are keyed by :attr:`~git_review.models.Commit.author` (the git
+        author name / GitHub login stored on the object).  Issues, PRs, and
+        releases are keyed by their ``author`` field (GitHub login).  An author
+        who only appears in one category still gets their own entry.
+
+        Parameters
+        ----------
+        summary:
+            The aggregate review data to partition.
+
+        Returns
+        -------
+        dict[str, AuthorSummary]
+            Mapping from author identifier to their
+            :class:`~git_review.models.AuthorSummary`, sorted alphabetically
+            by author key.
+        """
+        result: dict[str, AuthorSummary] = {}
+
+        def _get(key: str) -> AuthorSummary:
+            if key not in result:
+                result[key] = AuthorSummary(author=key)
+            return result[key]
+
+        for commit in summary.commits:
+            _get(commit.author).commits.append(commit)
+        for issue in summary.issues:
+            _get(issue.author).issues.append(issue)
+        for pr in summary.pull_requests:
+            _get(pr.author).pull_requests.append(pr)
+        for release in summary.releases:
+            if release.author:
+                _get(release.author).releases.append(release)
+
+        return dict(sorted(result.items()))
+
+    @staticmethod
+    def author_summaries_to_markdown(author_summaries: dict[str, AuthorSummary]) -> str:
+        """Render per-author activity tables as a GFM Markdown section.
+
+        Parameters
+        ----------
+        author_summaries:
+            The mapping returned by :meth:`partition_by_author`.
+
+        Returns
+        -------
+        str
+            A ``## By Author`` section containing a subsection for every
+            author, each with a stats headline and mini-tables for commits,
+            issues, PRs, and releases.
+        """
+        if not author_summaries:
+            return ""
+
+        sections: list[str] = ["## By Author"]
+        for author, data in author_summaries.items():
+            sections.append(_md_author_section(author, data))
+
+        return "\n\n".join(sections)
 
 
 # ---------------------------------------------------------------------------
@@ -388,3 +465,88 @@ def _days_open_bucket(days: int) -> str:
         if max_days is None or days <= max_days:
             return label
     return _DAYS_OPEN_BUCKETS[-1][0]
+
+
+def _md_author_section(author: str, data: AuthorSummary) -> str:
+    """Render a single author's activity as a ``###`` subsection."""
+    n_commits = len(data.commits)
+    n_open = sum(1 for i in data.issues if i.state == "open")
+    n_closed = sum(1 for i in data.issues if i.state == "closed")
+    n_merged = sum(1 for pr in data.pull_requests if pr.merged_at)
+    n_open_prs = sum(1 for pr in data.pull_requests if pr.state == "open")
+    n_releases = len(data.releases)
+
+    headline_parts = []
+    if n_commits:
+        headline_parts.append(f"**Commits:** {n_commits}")
+    if data.issues:
+        headline_parts.append(f"**Issues:** {len(data.issues)} ({n_open} open, {n_closed} closed)")
+    if data.pull_requests:
+        headline_parts.append(
+            f"**Pull Requests:** {len(data.pull_requests)} ({n_merged} merged, {n_open_prs} open)"
+        )
+    if n_releases:
+        headline_parts.append(f"**Releases:** {n_releases}")
+
+    parts: list[str] = [f"### {author}", "  \n".join(headline_parts)]
+
+    if data.commits:
+        headers = ["SHA", "Date", "Repo", "Message", "+", "-"]
+        rows = [
+            [
+                c.sha[:7],
+                str(c.authored_at.date()),
+                c.repo,
+                c.message[:80] + ("…" if len(c.message) > 80 else ""),
+                f"+{c.additions}" if c.additions else "",
+                f"-{c.deletions}" if c.deletions else "",
+            ]
+            for c in data.commits
+        ]
+        parts.append(f"#### Commits ({n_commits})\n\n{_md_table(headers, rows)}")
+
+    if data.issues:
+        headers = ["#", "State", "Repo", "Title", "Labels"]
+        rows = [
+            [
+                str(i.number),
+                i.state,
+                i.repo,
+                i.title[:80] + ("…" if len(i.title) > 80 else ""),
+                ", ".join(i.labels) if i.labels else "—",
+            ]
+            for i in data.issues
+        ]
+        parts.append(f"#### Issues ({len(data.issues)})\n\n{_md_table(headers, rows)}")
+
+    if data.pull_requests:
+        headers = ["#", "State", "Repo", "Title", "Merged"]
+        rows = [
+            [
+                str(pr.number),
+                pr.state,
+                pr.repo,
+                pr.title[:80] + ("…" if len(pr.title) > 80 else ""),
+                str(pr.merged_at.date()) if pr.merged_at else "—",
+            ]
+            for pr in data.pull_requests
+        ]
+        parts.append(
+            f"#### Pull Requests ({len(data.pull_requests)})\n\n{_md_table(headers, rows)}"
+        )
+
+    if data.releases:
+        headers = ["Tag", "Repo", "Name", "Published", "Pre-release"]
+        rows = [
+            [
+                r.tag,
+                r.repo,
+                r.name[:60] + ("…" if len(r.name) > 60 else ""),
+                str(r.published_at.date()) if r.published_at else "—",
+                "yes" if r.prerelease else "no",
+            ]
+            for r in data.releases
+        ]
+        parts.append(f"#### Releases ({n_releases})\n\n{_md_table(headers, rows)}")
+
+    return "\n\n".join(parts)

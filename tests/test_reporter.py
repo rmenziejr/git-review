@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from git_review.models import (
+    AuthorSummary,
     Commit,
     Contributor,
     Issue,
@@ -320,3 +321,160 @@ def test_fetch_tolerates_partial_errors() -> None:
     assert summary.commits == []
     # Other sections still attempted
     gh.get_issues.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# partition_by_author
+# ---------------------------------------------------------------------------
+
+
+def test_partition_by_author_groups_by_author_field() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+
+    assert "alice" in partitioned
+    assert "bob" in partitioned
+    assert "carol" in partitioned
+
+    assert len(partitioned["alice"].commits) == 1
+    assert len(partitioned["bob"].issues) == 1
+    assert len(partitioned["carol"].issues) == 1
+    assert len(partitioned["alice"].pull_requests) == 1
+    assert len(partitioned["alice"].releases) == 1
+
+
+def test_partition_by_author_is_sorted_alphabetically() -> None:
+    summary = _make_summary()
+    keys = list(ReviewReporter.partition_by_author(summary).keys())
+    assert keys == sorted(keys)
+
+
+def test_partition_by_author_releases_without_author_excluded() -> None:
+    summary = ReviewSummary(
+        owner="acme",
+        repo="app",
+        since=_SINCE,
+        until=_UNTIL,
+        releases=[
+            Release(
+                tag="v0.1",
+                name="v0.1",
+                body="",
+                created_at=_SINCE,
+                published_at=_SINCE,
+                url="https://example.com",
+                repo="acme/app",
+                author="",  # no author
+            )
+        ],
+    )
+    partitioned = ReviewReporter.partition_by_author(summary)
+    # The empty-author release must not create a spurious "" key
+    assert "" not in partitioned
+
+
+def test_partition_by_author_empty_summary() -> None:
+    summary = ReviewSummary(owner="acme", repo="app", since=_SINCE, until=_UNTIL)
+    assert ReviewReporter.partition_by_author(summary) == {}
+
+
+def test_partition_by_author_commit_not_duplicated_in_other_authors() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    # alice's commit should only be in alice's bucket
+    for author, bucket in partitioned.items():
+        if author != "alice":
+            assert all(c.sha != "abc1234567890" for c in bucket.commits)
+
+
+# ---------------------------------------------------------------------------
+# author_summaries_to_markdown
+# ---------------------------------------------------------------------------
+
+
+def test_author_summaries_to_markdown_has_by_author_header() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    assert "## By Author" in md
+
+
+def test_author_summaries_to_markdown_has_per_author_sections() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+
+    assert "### alice" in md
+    assert "### bob" in md
+    assert "### carol" in md
+
+
+def test_author_summaries_to_markdown_shows_commit_table_for_author() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    # alice has commits
+    assert "#### Commits (1)" in md
+    assert "feat: add feature" in md
+
+
+def test_author_summaries_to_markdown_shows_issue_table() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    assert "#### Issues" in md
+    assert "Bug in module" in md
+
+
+def test_author_summaries_to_markdown_shows_pr_table() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    assert "#### Pull Requests" in md
+    assert "Fix the bug" in md
+
+
+def test_author_summaries_to_markdown_shows_release_table() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    assert "#### Releases" in md
+    assert "v1.0.0" in md
+
+
+def test_author_summaries_to_markdown_headline_stats() -> None:
+    summary = _make_summary()
+    partitioned = ReviewReporter.partition_by_author(summary)
+    md = ReviewReporter.author_summaries_to_markdown(partitioned)
+    # alice has 1 commit, 1 merged PR, 1 release
+    assert "**Commits:** 1" in md
+    assert "**Pull Requests:**" in md
+    assert "**Releases:** 1" in md
+
+
+def test_author_summaries_to_markdown_empty_returns_empty_string() -> None:
+    assert ReviewReporter.author_summaries_to_markdown({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# to_markdown – include_author_summaries flag
+# ---------------------------------------------------------------------------
+
+
+def test_to_markdown_includes_author_summaries_by_default() -> None:
+    md = ReviewReporter.to_markdown(_make_summary())
+    assert "## By Author" in md
+    assert "### alice" in md
+
+
+def test_to_markdown_exclude_author_summaries() -> None:
+    md = ReviewReporter.to_markdown(_make_summary(), include_author_summaries=False)
+    assert "## By Author" not in md
+    assert "### alice" not in md
+
+
+def test_to_markdown_author_section_at_end() -> None:
+    md = ReviewReporter.to_markdown(_make_summary())
+    by_author_idx = md.index("## By Author")
+    contributors_idx = md.index("## Contributors")
+    assert by_author_idx > contributors_idx

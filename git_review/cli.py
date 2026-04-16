@@ -125,6 +125,16 @@ def main() -> None:
     help="Filter commits by this GitHub username.",
 )
 @click.option(
+    "--branch",
+    default=None,
+    metavar="BRANCH",
+    help=(
+        "Branch to fetch commits from. "
+        "Use '*' for all branches (deduplicated by SHA). "
+        "Defaults to the repository's default branch."
+    ),
+)
+@click.option(
     "--openai-key",
     envvar="OPENAI_API_KEY",
     default=None,
@@ -182,6 +192,7 @@ def review(
     until_str: Optional[str],
     days: int,
     author: Optional[str],
+    branch: Optional[str],
     openai_key: Optional[str],
     model: Optional[str],
     base_url: Optional[str],
@@ -265,7 +276,7 @@ def review(
             try:
                 review_data.commits += gh.get_commits(
                     resolved_owner, repo_name, since, until, author=author,
-                    include_stats=True,
+                    include_stats=True, branch=branch,
                 )
             except Exception as exc:
                 console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")

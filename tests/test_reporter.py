@@ -256,7 +256,7 @@ def test_fetch_single_repo_calls_client_methods() -> None:
     summary = reporter.fetch("acme", _SINCE, _UNTIL, repo="my-repo")
 
     gh.get_commits.assert_called_once_with(
-        "acme", "my-repo", _SINCE, _UNTIL, author=None, include_stats=True
+        "acme", "my-repo", _SINCE, _UNTIL, author=None, include_stats=True, branch="*"
     )
     gh.get_issues.assert_called_once_with("acme", "my-repo", _SINCE, _UNTIL)
     gh.get_pull_requests.assert_called_once_with(
@@ -287,8 +287,28 @@ def test_fetch_author_forwarded_to_get_commits() -> None:
     reporter.fetch("acme", _SINCE, _UNTIL, repo="my-repo", author="alice")
 
     gh.get_commits.assert_called_once_with(
-        "acme", "my-repo", _SINCE, _UNTIL, author="alice", include_stats=True
+        "acme", "my-repo", _SINCE, _UNTIL, author="alice", include_stats=True, branch="*"
     )
+
+
+def test_fetch_branch_forwarded_to_get_commits() -> None:
+    gh = _mock_gh()
+    reporter = ReviewReporter(gh)
+    reporter.fetch("acme", _SINCE, _UNTIL, repo="my-repo", branch="feature-x")
+
+    gh.get_commits.assert_called_once_with(
+        "acme", "my-repo", _SINCE, _UNTIL, author=None, include_stats=True, branch="feature-x"
+    )
+
+
+def test_fetch_default_branch_is_all_branches() -> None:
+    """SDK fetch() defaults to branch='*' so all branches are included."""
+    gh = _mock_gh()
+    reporter = ReviewReporter(gh)
+    reporter.fetch("acme", _SINCE, _UNTIL, repo="my-repo")
+
+    _, kwargs = gh.get_commits.call_args
+    assert kwargs.get("branch") == "*"
 
 
 def test_fetch_tolerates_partial_errors() -> None:

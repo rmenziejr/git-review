@@ -61,6 +61,7 @@ class ReviewReporter:
         *,
         repo: Optional[str] = None,
         author: Optional[str] = None,
+        branch: str = "*",
         include_stats: bool = True,
         include_details: bool = True,
     ) -> ReviewSummary:
@@ -80,6 +81,12 @@ class ReviewReporter:
             all non-archived repositories for *owner* are scanned.
         author:
             Optional GitHub username to filter commits by.
+        branch:
+            Which branch(es) to include when fetching commits.
+
+            * ``"*"`` (default) – every branch, deduplicated by SHA.
+            * ``None`` – the repository's default branch only.
+            * Any other string – that specific branch name.
         include_stats:
             When *True*, fetch per-commit addition/deletion counts
             (one extra API call per commit).
@@ -105,7 +112,7 @@ class ReviewReporter:
             try:
                 summary.commits += self._gh.get_commits(
                     owner, repo_name, since, until,
-                    author=author, include_stats=include_stats,
+                    author=author, include_stats=include_stats, branch=branch,
                 )
             except Exception:
                 pass

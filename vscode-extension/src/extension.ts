@@ -105,7 +105,7 @@ async function reviewRepository(): Promise<void> {
     if (!repo) {
       const ownerInput = await vscode.window.showInputBox({
         title: "Git Review: Review Owner",
-        prompt: "Enter the GitHub user or organisation name to review all repos.",
+        prompt: "Enter the GitHub user or organization name to review all repos.",
         placeHolder: "my-org",
         validateInput: (value: string) => {
           if (!value || !value.trim()) {

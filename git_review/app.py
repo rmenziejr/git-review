@@ -201,6 +201,13 @@ def _summarize_activity(
     review_data = ReviewSummary(owner=owner, repo=repo_label, since=since, until=until)
     errors: list[str] = []
     author_filter = author.strip() or None
+    section_to_attr = {
+        "commits": "commits",
+        "issues": "issues",
+        "pull_requests": "pull_requests",
+        "releases": "releases",
+        "contributors": "contributors",
+    }
 
     if all_repos:
         try:
@@ -226,7 +233,7 @@ def _summarize_activity(
                 ): "issues",
                 executor.submit(
                     gh.get_pull_requests, owner, repo_name, since, until, include_details=True
-                ): "pull requests",
+                ): "pull_requests",
                 executor.submit(
                     gh.get_releases, owner, repo_name, since, until
                 ): "releases",
@@ -239,18 +246,13 @@ def _summarize_activity(
                 data_label = futures[future]
                 try:
                     results = future.result()
-                    if data_label == "commits":
-                        review_data.commits += results
-                    elif data_label == "issues":
-                        review_data.issues += results
-                    elif data_label == "pull requests":
-                        review_data.pull_requests += results
-                    elif data_label == "releases":
-                        review_data.releases += results
-                    elif data_label == "contributors":
-                        review_data.contributors += results
+                    attr_name = section_to_attr[data_label]
+                    getattr(review_data, attr_name).extend(results)
                 except Exception as exc:
-                    errors.append(f"⚠️  Could not fetch {data_label} for {owner}/{repo_name}: {exc}")
+                    display_label = data_label.replace("_", " ")
+                    errors.append(
+                        f"⚠️  Could not fetch {display_label} for {owner}/{repo_name}: {exc}"
+                    )
 
     try:
         llm = LLMClient(

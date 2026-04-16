@@ -108,6 +108,13 @@ class ReviewReporter:
             since=since,
             until=until,
         )
+        section_to_attr = {
+            "commits": "commits",
+            "issues": "issues",
+            "pull_requests": "pull_requests",
+            "releases": "releases",
+            "contributors": "contributors",
+        }
 
         for repo_name in repo_names:
             with ThreadPoolExecutor(max_workers=5) as executor:
@@ -137,16 +144,8 @@ class ReviewReporter:
                     section = futures[future]
                     try:
                         results = future.result()
-                        if section == "commits":
-                            summary.commits += results
-                        elif section == "issues":
-                            summary.issues += results
-                        elif section == "pull_requests":
-                            summary.pull_requests += results
-                        elif section == "releases":
-                            summary.releases += results
-                        elif section == "contributors":
-                            summary.contributors += results
+                        attr_name = section_to_attr[section]
+                        getattr(summary, attr_name).extend(results)
                     except Exception:
                         pass
 

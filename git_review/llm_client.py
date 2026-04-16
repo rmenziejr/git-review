@@ -231,7 +231,7 @@ def _build_user_message(summary: ReviewSummary) -> str:
         lines.append(f"#### Contributors ({len(repo_contributors)})")
         if repo_contributors:
             for contributor in sorted(
-                repo_contributors, key=lambda item: item.contributions, reverse=True
+                repo_contributors, key=lambda contributor: contributor.contributions, reverse=True
             ):
                 lines.append(f"- {contributor.login}: {contributor.contributions} contributions")
         else:

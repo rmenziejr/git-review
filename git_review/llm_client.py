@@ -7,6 +7,7 @@ OpenAI-compatible, e.g. Azure OpenAI, local Ollama, Groq, …).
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 try:
@@ -44,6 +45,9 @@ Provide a 4–8 sentence executive summary that:
 
 ## Repository Breakdown
 
+You MUST include a subsection for every repository present in the input activity snapshot.
+If a repository has no activity for a category (commits/issues/PRs/releases), explicitly say "None in this period."
+
 For each repository, include a subsection:
 
 ### <Repository Name>
@@ -77,6 +81,7 @@ A concise 2–4 sentence overview of:
 
 - Be factual, professional, and concise
 - Do NOT invent or infer details not present in the data
+- Do NOT omit repositories or activity categories that appear in the input
 - Avoid listing every item; prioritize signal over noise
 - Group related work into themes instead of enumerating raw activity
 - Focus on outcomes and impact, not just actions
@@ -85,58 +90,140 @@ A concise 2–4 sentence overview of:
 """
 
 
+def _trim_text(text: str, max_len: int = 140) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1] + "…"
+
+
 def _build_user_message(summary: ReviewSummary) -> str:
     repo_label = "all repositories" if summary.repo == "*" else f"{summary.owner}/{summary.repo}"
+    repos_in_data = {
+        c.repo for c in summary.commits
+    } | {
+        i.repo for i in summary.issues
+    } | {
+        pr.repo for pr in summary.pull_requests
+    } | {
+        r.repo for r in summary.releases
+    } | {
+        c.repo for c in summary.contributors
+    }
+    repo_names = sorted(repos_in_data or ({f"{summary.owner}/{summary.repo}"} if summary.repo != "*" else set()))
+
     lines: list[str] = [
         f"Repository: {repo_label}",
         f"Period: {summary.since.date()} → {summary.until.date()}",
+        f"Repositories in scope ({len(repo_names)}): {', '.join(repo_names) if repo_names else 'none'}",
+        "",
+        "### Activity Totals",
+        f"- Commits: {len(summary.commits)}",
+        f"- Issues: {len(summary.issues)}",
+        f"- Pull Requests: {len(summary.pull_requests)}",
+        f"- Releases: {len(summary.releases)}",
+        f"- Contributors: {len(summary.contributors)}",
         "",
     ]
 
-    lines.append(f"### Commits ({len(summary.commits)})")
-    for c in summary.commits:
-        stats_str = f"  [+{c.additions}/-{c.deletions}]" if (c.additions or c.deletions) else ""
-        lines.append(
-            f"- [{c.sha[:7]}] {c.message}  (by {c.author} on {c.authored_at.date()}){stats_str}"
-        )
+    for repo_name in repo_names:
+        repo_commits = [c for c in summary.commits if c.repo == repo_name]
+        repo_issues = [i for i in summary.issues if i.repo == repo_name]
+        repo_prs = [pr for pr in summary.pull_requests if pr.repo == repo_name]
+        repo_releases = [r for r in summary.releases if r.repo == repo_name]
+        repo_contributors = [c for c in summary.contributors if c.repo == repo_name]
 
-    lines.append("")
-    lines.append(f"### Issues ({len(summary.issues)})")
-    for i in summary.issues:
-        label_str = ", ".join(i.labels) if i.labels else "—"
+        lines.append(f"### Repository: {repo_name}")
         lines.append(
-            f"- #{i.number} [{i.state}] {i.title}  (by {i.author}, labels: {label_str})"
+            f"- Totals: {len(repo_commits)} commits, {len(repo_issues)} issues, "
+            f"{len(repo_prs)} PRs, {len(repo_releases)} releases, "
+            f"{len(repo_contributors)} contributors"
         )
+        lines.append("")
 
-    lines.append("")
-    lines.append(f"### Pull Requests ({len(summary.pull_requests)})")
-    for pr in summary.pull_requests:
-        merged = "merged" if pr.merged_at else pr.state
-        draft_str = " [DRAFT]" if pr.draft else ""
-        if pr.reviewer_comments:
-            reviewer_str = "; reviewers: " + ", ".join(
-                f"{login}({count} comment{'s' if count != 1 else ''})"
-                for login, count in sorted(
-                    pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
+        lines.append(f"#### Commits ({len(repo_commits)})")
+        if repo_commits:
+            for c in repo_commits:
+                stats_str = f" [+{c.additions}/-{c.deletions}]" if (c.additions or c.deletions) else ""
+                lines.append(
+                    f"- [{c.sha[:7]}] {c.message} (by {c.author} on {c.authored_at.date()}){stats_str}"
                 )
-            )
         else:
-            reviewer_str = ""
-        lines.append(
-            f"- #{pr.number} [{merged}]{draft_str} {pr.title}  (by {pr.author}{reviewer_str})"
-        )
+            lines.append("- None in this period.")
+        lines.append("")
 
-    lines.append("")
-    lines.append(f"### Releases ({len(summary.releases)})")
-    for r in summary.releases:
-        pub_str = str(r.published_at.date()) if r.published_at else "unpublished"
-        pre_str = " [pre-release]" if r.prerelease else ""
-        lines.append(f"- {r.tag}{pre_str}: {r.name}  (published {pub_str} by {r.author or 'unknown'})")
+        lines.append(f"#### Issues ({len(repo_issues)})")
+        if repo_issues:
+            for i in repo_issues:
+                label_str = ", ".join(i.labels) if i.labels else "—"
+                assignee_str = ", ".join(i.assignees) if i.assignees else "—"
+                body_str = _trim_text(i.body)
+                lines.append(
+                    f"- #{i.number} [{i.state}] {i.title} (by {i.author}; labels: {label_str}; "
+                    f"comments: {i.comments}; assignees: {assignee_str})"
+                )
+                if body_str:
+                    lines.append(f"  body: {body_str}")
+        else:
+            lines.append("- None in this period.")
+        lines.append("")
 
-    lines.append("")
-    lines.append(f"### Contributors ({len(summary.contributors)})")
-    for c in summary.contributors:
-        lines.append(f"- {c.login}: {c.contributions} contributions")
+        lines.append(f"#### Pull Requests ({len(repo_prs)})")
+        if repo_prs:
+            for pr in repo_prs:
+                merged = "merged" if pr.merged_at else pr.state
+                draft_str = " [DRAFT]" if pr.draft else ""
+                merged_str = f"; merged_at: {pr.merged_at.date()}" if pr.merged_at else ""
+                label_str = ", ".join(pr.labels) if pr.labels else "—"
+                reviewers_str = (
+                    ", ".join(
+                        f"{login}({count})"
+                        for login, count in sorted(
+                            pr.reviewer_comments.items(), key=lambda x: x[1], reverse=True
+                        )
+                    )
+                    if pr.reviewer_comments
+                    else "—"
+                )
+                requested_reviewers = ", ".join(pr.requested_reviewers) if pr.requested_reviewers else "—"
+                lines.append(
+                    f"- #{pr.number} [{merged}]{draft_str} {pr.title} (by {pr.author}{merged_str}; "
+                    f"labels: {label_str}; reviewers: {reviewers_str}; requested_reviewers: {requested_reviewers}; "
+                    f"branches: {pr.base_branch} <- {pr.head_branch}; commits: {pr.commits_count}; "
+                    f"+{pr.additions}/-{pr.deletions}; files: {pr.changed_files}; review_comments: {pr.review_comments})"
+                )
+                body_str = _trim_text(pr.body)
+                if body_str:
+                    lines.append(f"  body: {body_str}")
+        else:
+            lines.append("- None in this period.")
+        lines.append("")
+
+        lines.append(f"#### Releases ({len(repo_releases)})")
+        if repo_releases:
+            for r in repo_releases:
+                pub_str = str(r.published_at.date()) if r.published_at else "unpublished"
+                pre_str = " [pre-release]" if r.prerelease else ""
+                draft_str = " [draft]" if r.draft else ""
+                lines.append(
+                    f"- {r.tag}{pre_str}{draft_str}: {r.name} (published {pub_str} by {r.author or 'unknown'})"
+                )
+                body_str = _trim_text(r.body)
+                if body_str:
+                    lines.append(f"  notes: {body_str}")
+        else:
+            lines.append("- None in this period.")
+        lines.append("")
+
+        lines.append(f"#### Contributors ({len(repo_contributors)})")
+        if repo_contributors:
+            for contributor in sorted(
+                repo_contributors, key=lambda item: item.contributions, reverse=True
+            ):
+                lines.append(f"- {contributor.login}: {contributor.contributions} contributions")
+        else:
+            lines.append("- None in this period.")
+        lines.append("")
 
     return "\n".join(lines)
 

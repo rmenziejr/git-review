@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -212,39 +213,44 @@ def _summarize_activity(
         repo_names = [repo_label]
 
     for repo_name in repo_names:
-        for fetch_fn, data_label in (
-            (
-                lambda rn=repo_name: gh.get_commits(
-                    owner, rn, since, until,
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(
+                    gh.get_commits,
+                    owner, repo_name, since, until,
                     author=author_filter,
                     include_stats=True,
-                ),
-                "commits",
-            ),
-            (lambda rn=repo_name: gh.get_issues(owner, rn, since, until), "issues"),
-            (
-                lambda rn=repo_name: gh.get_pull_requests(
-                    owner, rn, since, until, include_details=True
-                ),
-                "pull requests",
-            ),
-            (lambda rn=repo_name: gh.get_releases(owner, rn, since, until), "releases"),
-            (lambda rn=repo_name: gh.get_contributors(owner, rn), "contributors"),
-        ):
-            try:
-                results = fetch_fn()
-                if data_label == "commits":
-                    review_data.commits += results
-                elif data_label == "issues":
-                    review_data.issues += results
-                elif data_label == "pull requests":
-                    review_data.pull_requests += results
-                elif data_label == "releases":
-                    review_data.releases += results
-                elif data_label == "contributors":
-                    review_data.contributors += results
-            except Exception as exc:
-                errors.append(f"⚠️  Could not fetch {data_label} for {owner}/{repo_name}: {exc}")
+                ): "commits",
+                executor.submit(
+                    gh.get_issues, owner, repo_name, since, until
+                ): "issues",
+                executor.submit(
+                    gh.get_pull_requests, owner, repo_name, since, until, include_details=True
+                ): "pull requests",
+                executor.submit(
+                    gh.get_releases, owner, repo_name, since, until
+                ): "releases",
+                executor.submit(
+                    gh.get_contributors, owner, repo_name
+                ): "contributors",
+            }
+
+            for future in as_completed(futures):
+                data_label = futures[future]
+                try:
+                    results = future.result()
+                    if data_label == "commits":
+                        review_data.commits += results
+                    elif data_label == "issues":
+                        review_data.issues += results
+                    elif data_label == "pull requests":
+                        review_data.pull_requests += results
+                    elif data_label == "releases":
+                        review_data.releases += results
+                    elif data_label == "contributors":
+                        review_data.contributors += results
+                except Exception as exc:
+                    errors.append(f"⚠️  Could not fetch {data_label} for {owner}/{repo_name}: {exc}")
 
     try:
         llm = LLMClient(
@@ -796,4 +802,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

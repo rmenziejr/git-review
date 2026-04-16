@@ -38,6 +38,8 @@ Open **File → Preferences → Settings** (or press `Ctrl+,`) and search for **
 | `gitReview.openaiApiKey` | OpenAI API key | `--openai-key` / `OPENAI_API_KEY` |
 | `gitReview.openaiBaseUrl` | Custom OpenAI-compatible base URL (Ollama, Azure, Groq…) | `--base-url` / `OPENAI_BASE_URL` |
 | `gitReview.defaultRepo` | Default repository in `owner/repo` format | `--repo` / `GITREVIEW_REPO` |
+| `gitReview.defaultOwner` | Default owner/org for owner-only review runs (used when `defaultRepo` is empty) | `--owner` |
+| `gitReview.reviewAuthor` | Optional commit author filter for review runs | `--author` |
 | `gitReview.model` | LLM model (default: `gpt-4o-mini`) | `--model` / `GIT_REVIEW_MODEL` |
 | `gitReview.defaultDays` | Days to look back for reviews (default: `7`) | `--days` |
 

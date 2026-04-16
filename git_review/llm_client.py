@@ -92,6 +92,7 @@ A concise 2–4 sentence overview of:
 
 
 def _trim_text(text: str, max_len: int = _DEFAULT_TEXT_SNIPPET_MAX_LEN) -> str:
+    """Normalize whitespace and truncate text to *max_len* with an ellipsis."""
     cleaned = re.sub(r"\s+", " ", (text or "").strip())
     if len(cleaned) <= max_len:
         return cleaned
@@ -189,11 +190,20 @@ def _build_user_message(summary: ReviewSummary) -> str:
                     else "—"
                 )
                 requested_reviewers = ", ".join(pr.requested_reviewers) if pr.requested_reviewers else "—"
+                detail_fields = [
+                    f"labels: {label_str}",
+                    f"reviewers: {reviewers_str}",
+                    f"requested_reviewers: {requested_reviewers}",
+                    f"branches: {pr.base_branch} <- {pr.head_branch}",
+                    f"commits: {pr.commits_count}",
+                    f"+{pr.additions}/-{pr.deletions}",
+                    f"files: {pr.changed_files}",
+                    f"review_comments: {pr.review_comments}",
+                ]
+                detail_str = "; ".join(detail_fields)
                 lines.append(
-                    f"- #{pr.number} [{merged}]{draft_str} {pr.title} (by {pr.author}{merged_str}; "
-                    f"labels: {label_str}; reviewers: {reviewers_str}; requested_reviewers: {requested_reviewers}; "
-                    f"branches: {pr.base_branch} <- {pr.head_branch}; commits: {pr.commits_count}; "
-                    f"+{pr.additions}/-{pr.deletions}; files: {pr.changed_files}; review_comments: {pr.review_comments})"
+                    f"- #{pr.number} [{merged}]{draft_str} {pr.title} "
+                    f"(by {pr.author}{merged_str}; {detail_str})"
                 )
                 body_str = _trim_text(pr.body)
                 if body_str:

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from git_review.llm_client import LLMClient, _build_user_message
-from git_review.models import Commit, Issue, PullRequest, ReviewSummary
+from git_review.models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
 
 SINCE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 UNTIL = datetime(2024, 1, 31, tzinfo=timezone.utc)
@@ -76,6 +76,85 @@ def test_build_user_message_contains_key_info() -> None:
     # Reviewer comment info should be included
     assert "alice" in msg
     assert "2 comment" in msg
+
+
+def test_build_user_message_groups_activity_by_repository() -> None:
+    summary = ReviewSummary(
+        owner="acme",
+        repo="*",
+        since=SINCE,
+        until=UNTIL,
+        commits=[
+            Commit(
+                sha="aaa1234567890",
+                message="feat: app login",
+                author="Alice",
+                authored_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                url="https://github.com/acme/app/commit/aaa1234567890",
+                repo="acme/app",
+            ),
+            Commit(
+                sha="bbb1234567890",
+                message="fix: api timeout",
+                author="Bob",
+                authored_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
+                url="https://github.com/acme/api/commit/bbb1234567890",
+                repo="acme/api",
+            ),
+        ],
+        issues=[
+            Issue(
+                number=2,
+                title="API error handling",
+                state="open",
+                author="bob",
+                created_at=datetime(2024, 1, 5, tzinfo=timezone.utc),
+                closed_at=None,
+                url="https://github.com/acme/api/issues/2",
+                repo="acme/api",
+            )
+        ],
+        pull_requests=[
+            PullRequest(
+                number=11,
+                title="Improve app onboarding",
+                state="open",
+                author="carol",
+                created_at=datetime(2024, 1, 6, tzinfo=timezone.utc),
+                merged_at=None,
+                url="https://github.com/acme/app/pull/11",
+                repo="acme/app",
+            )
+        ],
+        releases=[
+            Release(
+                tag="v1.2.0",
+                name="App 1.2.0",
+                body="Release notes",
+                created_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                published_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                url="https://github.com/acme/app/releases/tag/v1.2.0",
+                repo="acme/app",
+                author="alice",
+            )
+        ],
+        contributors=[
+            Contributor(
+                login="alice",
+                contributions=12,
+                url="https://github.com/alice",
+                repo="acme/app",
+            )
+        ],
+    )
+
+    msg = _build_user_message(summary)
+    assert "Repositories in scope (2): acme/api, acme/app" in msg
+    assert "### Repository: acme/api" in msg
+    assert "### Repository: acme/app" in msg
+    assert "#### Releases (0)" in msg  # acme/api
+    assert "#### Releases (1)" in msg  # acme/app
+    assert "None in this period." in msg
 
 
 # ---------------------------------------------------------------------------

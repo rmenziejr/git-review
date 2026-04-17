@@ -23,6 +23,7 @@ Example
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -107,38 +108,46 @@ class ReviewReporter:
             since=since,
             until=until,
         )
+        section_to_attr = {
+            "commits": "commits",
+            "issues": "issues",
+            "pull_requests": "pull_requests",
+            "releases": "releases",
+            "contributors": "contributors",
+        }
 
         for repo_name in repo_names:
-            try:
-                summary.commits += self._gh.get_commits(
-                    owner, repo_name, since, until,
-                    author=author, include_stats=include_stats, branch=branch,
-                )
-            except Exception:
-                pass
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(
+                        self._gh.get_commits,
+                        owner, repo_name, since, until,
+                        author=author, include_stats=include_stats, branch=branch,
+                    ): "commits",
+                    executor.submit(
+                        self._gh.get_issues, owner, repo_name, since, until
+                    ): "issues",
+                    executor.submit(
+                        self._gh.get_pull_requests,
+                        owner, repo_name, since, until,
+                        include_details=include_details,
+                    ): "pull_requests",
+                    executor.submit(
+                        self._gh.get_releases, owner, repo_name, since, until
+                    ): "releases",
+                    executor.submit(
+                        self._gh.get_contributors, owner, repo_name
+                    ): "contributors",
+                }
 
-            try:
-                summary.issues += self._gh.get_issues(owner, repo_name, since, until)
-            except Exception:
-                pass
-
-            try:
-                summary.pull_requests += self._gh.get_pull_requests(
-                    owner, repo_name, since, until,
-                    include_details=include_details,
-                )
-            except Exception:
-                pass
-
-            try:
-                summary.releases += self._gh.get_releases(owner, repo_name, since, until)
-            except Exception:
-                pass
-
-            try:
-                summary.contributors += self._gh.get_contributors(owner, repo_name)
-            except Exception:
-                pass
+                for future in as_completed(futures):
+                    section = futures[future]
+                    try:
+                        results = future.result()
+                        attr_name = section_to_attr[section]
+                        getattr(summary, attr_name).extend(results)
+                    except Exception:
+                        pass
 
         return summary
 

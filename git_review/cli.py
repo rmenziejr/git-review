@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -267,45 +268,52 @@ def review(
     review_data = ReviewSummary(
         owner=resolved_owner, repo=repo_label, since=since, until=until
     )
+    section_to_attr = {
+        "commits": "commits",
+        "issues": "issues",
+        "pull_requests": "pull_requests",
+        "releases": "releases",
+        "contributors": "contributors",
+    }
 
     for repo_name in repo_names:
         if all_repos_mode:
             console.print(f"[dim]Scanning {resolved_owner}/{repo_name}…[/dim]")
 
-        with console.status(f"[bold green]Fetching commits for {repo_name}…"):
-            try:
-                review_data.commits += gh.get_commits(
-                    resolved_owner, repo_name, since, until, author=author,
-                    include_stats=True, branch=branch,
-                )
-            except Exception as exc:
-                console.print(f"[yellow]  Skipping commits for {repo_name}:[/yellow] {exc}")
+        with console.status(f"[bold green]Fetching GitHub activity for {repo_name}…"):
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(
+                        gh.get_commits,
+                        resolved_owner, repo_name, since, until,
+                        author=author, include_stats=True, branch=branch,
+                    ): "commits",
+                    executor.submit(
+                        gh.get_issues, resolved_owner, repo_name, since, until
+                    ): "issues",
+                    executor.submit(
+                        gh.get_pull_requests,
+                        resolved_owner, repo_name, since, until, include_details=True
+                    ): "pull_requests",
+                    executor.submit(
+                        gh.get_releases, resolved_owner, repo_name, since, until
+                    ): "releases",
+                    executor.submit(
+                        gh.get_contributors, resolved_owner, repo_name
+                    ): "contributors",
+                }
 
-        with console.status(f"[bold green]Fetching issues for {repo_name}…"):
-            try:
-                review_data.issues += gh.get_issues(resolved_owner, repo_name, since, until)
-            except Exception as exc:
-                console.print(f"[yellow]  Skipping issues for {repo_name}:[/yellow] {exc}")
-
-        with console.status(f"[bold green]Fetching pull requests for {repo_name}…"):
-            try:
-                review_data.pull_requests += gh.get_pull_requests(
-                    resolved_owner, repo_name, since, until, include_details=True
-                )
-            except Exception as exc:
-                console.print(f"[yellow]  Skipping pull requests for {repo_name}:[/yellow] {exc}")
-
-        with console.status(f"[bold green]Fetching releases for {repo_name}…"):
-            try:
-                review_data.releases += gh.get_releases(resolved_owner, repo_name, since, until)
-            except Exception as exc:
-                console.print(f"[yellow]  Skipping releases for {repo_name}:[/yellow] {exc}")
-
-        with console.status(f"[bold green]Fetching contributors for {repo_name}…"):
-            try:
-                review_data.contributors += gh.get_contributors(resolved_owner, repo_name)
-            except Exception as exc:
-                console.print(f"[yellow]  Skipping contributors for {repo_name}:[/yellow] {exc}")
+                for future in as_completed(futures):
+                    data_label = futures[future]
+                    try:
+                        results = future.result()
+                        attr_name = section_to_attr[data_label]
+                        getattr(review_data, attr_name).extend(results)
+                    except Exception as exc:
+                        display_label = data_label.replace("_", " ")
+                        console.print(
+                            f"[yellow]  Skipping {display_label} for {repo_name}:[/yellow] {exc}"
+                        )
 
     # --- Print rich tables ------------------------------------------
     render_review_tables(review_data, console=console)

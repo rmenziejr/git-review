@@ -40,11 +40,13 @@ directly inside your editor.
 | **Commit message generator** | Write a Conventional Commit message from your staged diff |
 | **Issue generator** | Parse a markdown requirements file and create GitHub issues via LLM |
 | **Milestone management** | Create and list GitHub milestones from the CLI or web app |
+| **Agile planner** | Fetch all open issues/PRs, detect blocking dependencies, and generate a prioritised sprint plan via LLM |
+| **Native dependency API** | Write inferred blocking/blocked-by relationships back to GitHub using the native issue-dependencies REST API |
 | **Custom prompts** | Override the LLM system prompt with a Jinja2 template via `--prompt-file` |
 | **Thinking mode** | Extended reasoning for commit-message generation with `--think` |
 | **Rich terminal output** | Colour-coded tables and a formatted summary panel |
-| **Gradio web app** | Browser-based UI with tabs for activity summary, milestones, requirements parsing, and issue submission |
-| **Python SDK** | Use `GitHubClient` and `LLMClient` directly in your own code |
+| **Gradio web app** | Browser-based UI with tabs for activity summary, milestones, requirements parsing, issue submission, and agile planning |
+| **Python SDK** | Use `GitHubClient`, `LLMClient`, and `AgilePlanner` directly in your own code |
 | **VS Code extension** | Run all commands from the Command Palette inside VS Code |
 
 ---
@@ -233,6 +235,53 @@ git-review create-issues --repo owner/repo --requirements requirements.md \
   --token ghp_xxx --openai-key sk-xxx --prompt-file my_prompt.j2
 ```
 
+### Agile sprint planning
+
+```bash
+# Generate a sprint plan for a single repo (table + LLM analysis)
+git-review agile --repo owner/repo --token ghp_xxx --openai-key sk-xxx
+
+# Org-level plan — plan across ALL repos for an owner (three equivalent forms):
+git-review agile --repo owner/*   --token ghp_xxx --openai-key sk-xxx
+git-review agile --repo owner     --token ghp_xxx --openai-key sk-xxx
+git-review agile --owner owner    --token ghp_xxx --openai-key sk-xxx
+
+# Show only open issues/PRs without running the LLM
+git-review agile --repo owner/repo --token ghp_xxx --no-summary
+
+# Customise sprint size and number of sprints
+git-review agile --repo owner/repo --sprint-capacity 8 --sprints 4 \
+  --token ghp_xxx --openai-key sk-xxx
+
+# Write the plan to a markdown file
+git-review agile --repo owner/repo \
+  --token ghp_xxx --openai-key sk-xxx --output plan.md
+
+# Preview what new blocking relationships would be recorded (dry-run)
+git-review agile --repo owner/repo \
+  --token ghp_xxx --openai-key sk-xxx \
+  --apply-relationships --dry-run
+
+# Record new inferred blocking relationships in GitHub's dependency API
+git-review agile --repo owner/repo \
+  --token ghp_xxx --openai-key sk-xxx --apply-relationships
+
+# Apply priority label recommendations to issues
+git-review agile --repo owner/repo \
+  --token ghp_xxx --openai-key sk-xxx --apply-labels
+```
+
+The `agile` command reads **existing** GitHub blocking/blocked-by relationships
+(via `GET /repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by`),
+merges them with text-extracted and LLM-inferred relationships, and presents
+the full dependency graph alongside a sprint-by-sprint backlog.
+
+When `--apply-relationships` is used (without `--dry-run`) the tool prompts
+for confirmation, then calls
+`POST /repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by` to
+register each new LLM-inferred dependency directly in GitHub — no labels
+involved.
+
 ---
 
 ## Web App (Gradio)
@@ -266,6 +315,7 @@ browser to access the UI.
 | **🏁 Milestones** | Create a new milestone or list existing milestones in a repository |
 | **📄 Parse Requirements** | Upload or fetch a markdown requirements file and generate issue drafts via LLM |
 | **🚀 Submit Issues** | Review, edit, and selectively push the generated issue drafts to GitHub |
+| **🗂️ Agile Planner** | Fetch open issues/PRs, show the dependency graph, generate a sprint plan, and optionally write blocking relationships back to GitHub |
 
 ### Web app configuration
 
@@ -381,6 +431,13 @@ render_review_tables(summary_all)
 | `get_commits(owner, repo, since, until, author=None)` | `list[Commit]` | Commits in the time window |
 | `get_issues(owner, repo, since, until, state="all")` | `list[Issue]` | Issues (PRs excluded) |
 | `get_pull_requests(owner, repo, since, until, state="all")` | `list[PullRequest]` | Pull requests |
+| `get_open_issues(owner, repo)` | `list[Issue]` | All currently open issues (no time filter) |
+| `get_open_pull_requests(owner, repo)` | `list[PullRequest]` | All currently open PRs (no time filter) |
+| `get_issue_blocked_by(owner, repo, issue_number)` | `list[dict]` | Issues that block the given issue (GitHub dependency API) |
+| `get_issue_blocking(owner, repo, issue_number)` | `list[dict]` | Issues the given issue is blocking (GitHub dependency API) |
+| `add_issue_blocked_by(owner, repo, issue_number, blocking_issue_id)` | `dict` | Record a blocked-by relationship via GitHub's native API |
+| `remove_issue_blocked_by(owner, repo, issue_number, blocking_issue_id)` | `dict` | Remove a blocked-by relationship |
+| `update_issue_labels(owner, repo, issue_number, labels)` | `dict` | Replace all labels on an issue |
 
 #### `LLMClient(api_key=None, model="gpt-4o-mini", base_url=None)`
 
@@ -394,6 +451,41 @@ render_review_tables(summary_all)
 |---|---|---|
 | `generate(diff: str)` | `str` | Conventional Commit message for the given diff |
 
+#### `AgilePlanner(github_client, openai_api_key=None, model="gpt-4o-mini", base_url=None, sprint_capacity=10, num_sprints=3)`
+
+| Method | Returns | Description |
+|---|---|---|
+| `analyse(owner, repo)` | `AgilePlanResult` | Fetch open issues/PRs, read GitHub dependencies, infer new ones with LLM, generate sprint plan |
+| `analyse_org(owner)` | `AgilePlanResult` | Same as `analyse` but aggregates across all repos for the owner |
+| `apply_relationships(owner, repo, result, dry_run=True)` | `list[dict]` | Write new LLM-inferred blocked-by relationships to GitHub's dependency API |
+| `apply_labels(owner, repo, result, dry_run=True)` | `list[dict]` | Apply priority label recommendations to issues |
+
+```python
+from git_review import GitHubClient, AgilePlanner
+
+gh = GitHubClient(token="ghp_xxx")
+planner = AgilePlanner(
+    github_client=gh,
+    openai_api_key="sk-xxx",
+    sprint_capacity=8,
+    num_sprints=3,
+)
+
+result = planner.analyse("myorg", "myrepo")
+print(result.summary_text)
+
+for sprint in result.sprints:
+    print(f"Sprint {sprint.sprint_number} — {sprint.theme}")
+    for issue_number in sprint.issues:
+        print(f"  #{issue_number}")
+
+# Preview what would be written to GitHub
+planner.apply_relationships("myorg", "myrepo", result, dry_run=True)
+
+# Actually record new inferred blocking relationships
+planner.apply_relationships("myorg", "myrepo", result, dry_run=False)
+```
+
 ---
 
 ## Project Layout
@@ -401,9 +493,10 @@ render_review_tables(summary_all)
 ```
 git_review/
 ├── __init__.py                  # Public SDK exports
-├── models.py                    # Dataclasses: Commit, Issue, PullRequest, ReviewSummary
-├── github_client.py             # GitHub REST API wrapper
+├── models.py                    # Dataclasses: Commit, Issue, PullRequest, ReviewSummary, IssueDependency, SprintRecommendation, AgilePlanResult
+├── github_client.py             # GitHub REST API wrapper (including native dependency endpoints)
 ├── llm_client.py                # OpenAI-compatible LLM summarisation
+├── agile_planner.py             # Agile sprint planner (dependency graph + sprint plan via LLM)
 ├── commit_message_generator.py  # Commit message generation from git diffs
 ├── issue_factory.py             # LLM-powered GitHub issue creation
 ├── prompt_utils.py              # Jinja2 prompt template loader
@@ -411,6 +504,7 @@ git_review/
 ├── app.py                       # Gradio web application (optional, requires [gradio] extra)
 └── cli.py                       # Click CLI entry-point
 tests/
+├── test_agile_planner.py
 ├── test_github_client.py
 ├── test_llm_client.py
 ├── test_commit_message_generator.py

@@ -549,6 +549,224 @@ class GitHubClient:
             payload["due_on"] = due_on
         return self._post(f"repos/{owner}/{repo}/milestones", json=payload)
 
+    def get_open_issues(
+        self,
+        owner: str,
+        repo: str,
+    ) -> list[Issue]:
+        """Return all currently open issues for *repo* (no time-window filter).
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        """
+        raw = self._paginate(
+            f"repos/{owner}/{repo}/issues",
+            state="open",
+            per_page=100,
+            direction="asc",
+            sort="created",
+        )
+        issues: list[Issue] = []
+        for item in raw:
+            if item.get("pull_request"):
+                continue
+            closed_at_str = item.get("closed_at")
+            milestone_info = item.get("milestone") or {}
+            issues.append(
+                Issue(
+                    number=item["number"],
+                    title=item.get("title", ""),
+                    state=item.get("state", ""),
+                    author=(item.get("user") or {}).get("login", "unknown"),
+                    created_at=isoparse(item.get("created_at", "1970-01-01T00:00:00Z")),
+                    closed_at=isoparse(closed_at_str) if closed_at_str else None,
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                    labels=[label.get("name", "") for label in item.get("labels", [])],
+                    body=item.get("body") or "",
+                    comments=item.get("comments", 0),
+                    assignees=[
+                        (a.get("login") or "") for a in item.get("assignees", []) if a
+                    ],
+                    milestone=milestone_info.get("title"),
+                    github_id=item.get("id"),
+                )
+            )
+        return issues
+
+    def get_open_pull_requests(
+        self,
+        owner: str,
+        repo: str,
+    ) -> list[PullRequest]:
+        """Return all currently open pull requests for *repo* (no time-window filter).
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        """
+        raw = self._paginate(
+            f"repos/{owner}/{repo}/pulls",
+            state="open",
+            per_page=100,
+            direction="asc",
+            sort="created",
+        )
+        prs: list[PullRequest] = []
+        for item in raw:
+            merged_at_str = item.get("merged_at")
+            prs.append(
+                PullRequest(
+                    number=item["number"],
+                    title=item.get("title", ""),
+                    state=item.get("state", ""),
+                    author=(item.get("user") or {}).get("login", "unknown"),
+                    created_at=isoparse(item.get("created_at", "1970-01-01T00:00:00Z")),
+                    merged_at=isoparse(merged_at_str) if merged_at_str else None,
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                    labels=[label.get("name", "") for label in item.get("labels", [])],
+                    body=item.get("body") or "",
+                    draft=item.get("draft", False),
+                    base_branch=(item.get("base") or {}).get("ref", ""),
+                    head_branch=(item.get("head") or {}).get("ref", ""),
+                    requested_reviewers=[
+                        (r.get("login") or "") for r in item.get("requested_reviewers", []) if r
+                    ],
+                )
+            )
+        return prs
+
+    def get_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+    ) -> list[dict]:
+        """Return the raw API objects for issues that block *issue_number*.
+
+        Uses ``GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The number of the issue whose blockers to fetch.
+        """
+        return self._paginate(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by"
+        )
+
+    def get_issue_blocking(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+    ) -> list[dict]:
+        """Return the raw API objects for issues that *issue_number* is blocking.
+
+        Uses ``GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The number of the issue whose dependents to fetch.
+        """
+        return self._paginate(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking"
+        )
+
+    def add_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        blocking_issue_id: int,
+    ) -> dict:
+        """Record that *issue_number* is blocked by the issue with internal id *blocking_issue_id*.
+
+        Uses ``POST /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by``
+        with ``{"issue_id": blocking_issue_id}``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates for the blocked issue.
+        issue_number:
+            The issue number that is being blocked.
+        blocking_issue_id:
+            GitHub's internal integer ``id`` (not the human-readable ``number``)
+            of the issue that is doing the blocking.  This is the ``id`` field
+            returned by the Issues REST API.
+        """
+        return self._post(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by",
+            json={"issue_id": blocking_issue_id},
+        )
+
+    def remove_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        blocking_issue_id: int,
+    ) -> dict:
+        """Remove the 'blocked by' dependency between *issue_number* and *blocking_issue_id*.
+
+        Uses ``DELETE /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{issue_id}``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates for the blocked issue.
+        issue_number:
+            The issue number whose blocker to remove.
+        blocking_issue_id:
+            GitHub's internal integer ``id`` of the blocking issue.
+        """
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{blocking_issue_id}".lstrip("/"),
+        )
+        response = self._session.delete(url)
+        response.raise_for_status()
+        return response.json()
+
+    def update_issue_labels(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        labels: list[str],
+    ) -> dict:
+        """Replace the labels on an issue with *labels*.
+
+        Uses the GitHub PATCH issues endpoint.  Existing labels not in *labels*
+        will be removed.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            Issue number to update.
+        labels:
+            Full list of label names to set on the issue.
+        """
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/issues/{issue_number}".lstrip("/"),
+        )
+        response = self._session.patch(url, json={"labels": labels})
+        response.raise_for_status()
+        return response.json()
+
     def list_milestones(
         self,
         owner: str,

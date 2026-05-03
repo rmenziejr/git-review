@@ -37,6 +37,7 @@ class Issue:
     body: str = ""
     comments: int = 0
     assignees: list[str] = field(default_factory=list)
+    milestone: Optional[str] = None
 
 
 @dataclass
@@ -131,3 +132,40 @@ class ReviewSummary:
     releases: list[Release] = field(default_factory=list)
     contributors: list[Contributor] = field(default_factory=list)
     summary_text: str = ""
+
+
+@dataclass
+class IssueDependency:
+    """A directed dependency relationship between two issues."""
+
+    from_issue: int
+    to_issue: int
+    dep_type: str
+    confidence: float
+    reason: str
+    source: str = "llm"
+
+
+@dataclass
+class SprintRecommendation:
+    """Issues recommended for a single sprint."""
+
+    sprint_number: int
+    issues: list[int] = field(default_factory=list)
+    theme: str = ""
+    rationale: str = ""
+    deferred: list[int] = field(default_factory=list)
+
+
+@dataclass
+class AgilePlanResult:
+    """Top-level result from the agile planner."""
+
+    owner: str
+    repo: str
+    issues: list[Issue] = field(default_factory=list)
+    pull_requests: list[PullRequest] = field(default_factory=list)
+    dependencies: list[IssueDependency] = field(default_factory=list)
+    sprints: list[SprintRecommendation] = field(default_factory=list)
+    summary_text: str = ""
+    label_recommendations: dict[int, list[str]] = field(default_factory=dict)

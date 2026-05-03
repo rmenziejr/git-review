@@ -549,6 +549,122 @@ class GitHubClient:
             payload["due_on"] = due_on
         return self._post(f"repos/{owner}/{repo}/milestones", json=payload)
 
+    def get_open_issues(
+        self,
+        owner: str,
+        repo: str,
+    ) -> list[Issue]:
+        """Return all currently open issues for *repo* (no time-window filter).
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        """
+        raw = self._paginate(
+            f"repos/{owner}/{repo}/issues",
+            state="open",
+            per_page=100,
+            direction="asc",
+            sort="created",
+        )
+        issues: list[Issue] = []
+        for item in raw:
+            if item.get("pull_request"):
+                continue
+            closed_at_str = item.get("closed_at")
+            milestone_info = item.get("milestone") or {}
+            issues.append(
+                Issue(
+                    number=item["number"],
+                    title=item.get("title", ""),
+                    state=item.get("state", ""),
+                    author=(item.get("user") or {}).get("login", "unknown"),
+                    created_at=isoparse(item.get("created_at", "1970-01-01T00:00:00Z")),
+                    closed_at=isoparse(closed_at_str) if closed_at_str else None,
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                    labels=[label.get("name", "") for label in item.get("labels", [])],
+                    body=item.get("body") or "",
+                    comments=item.get("comments", 0),
+                    assignees=[
+                        (a.get("login") or "") for a in item.get("assignees", []) if a
+                    ],
+                    milestone=milestone_info.get("title"),
+                )
+            )
+        return issues
+
+    def get_open_pull_requests(
+        self,
+        owner: str,
+        repo: str,
+    ) -> list[PullRequest]:
+        """Return all currently open pull requests for *repo* (no time-window filter).
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        """
+        raw = self._paginate(
+            f"repos/{owner}/{repo}/pulls",
+            state="open",
+            per_page=100,
+            direction="asc",
+            sort="created",
+        )
+        prs: list[PullRequest] = []
+        for item in raw:
+            merged_at_str = item.get("merged_at")
+            prs.append(
+                PullRequest(
+                    number=item["number"],
+                    title=item.get("title", ""),
+                    state=item.get("state", ""),
+                    author=(item.get("user") or {}).get("login", "unknown"),
+                    created_at=isoparse(item.get("created_at", "1970-01-01T00:00:00Z")),
+                    merged_at=isoparse(merged_at_str) if merged_at_str else None,
+                    url=item.get("html_url", ""),
+                    repo=f"{owner}/{repo}",
+                    labels=[label.get("name", "") for label in item.get("labels", [])],
+                    body=item.get("body") or "",
+                    draft=item.get("draft", False),
+                    base_branch=(item.get("base") or {}).get("ref", ""),
+                    head_branch=(item.get("head") or {}).get("ref", ""),
+                    requested_reviewers=[
+                        (r.get("login") or "") for r in item.get("requested_reviewers", []) if r
+                    ],
+                )
+            )
+        return prs
+
+    def update_issue_labels(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        labels: list[str],
+    ) -> dict:
+        """Replace the labels on an issue with *labels*.
+
+        Uses the GitHub PATCH issues endpoint.  Existing labels not in *labels*
+        will be removed.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            Issue number to update.
+        labels:
+            Full list of label names to set on the issue.
+        """
+        url = urljoin(self._base_url, f"repos/{owner}/{repo}/issues/{issue_number}".lstrip("/"))
+        response = self._session.patch(url, json={"labels": labels})
+        response.raise_for_status()
+        return response.json()
+
     def list_milestones(
         self,
         owner: str,

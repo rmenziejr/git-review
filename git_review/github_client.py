@@ -591,6 +591,7 @@ class GitHubClient:
                         (a.get("login") or "") for a in item.get("assignees", []) if a
                     ],
                     milestone=milestone_info.get("title"),
+                    github_id=item.get("id"),
                 )
             )
         return issues
@@ -639,6 +640,104 @@ class GitHubClient:
             )
         return prs
 
+    def get_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+    ) -> list[dict]:
+        """Return the raw API objects for issues that block *issue_number*.
+
+        Uses ``GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The number of the issue whose blockers to fetch.
+        """
+        return self._paginate(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by"
+        )
+
+    def get_issue_blocking(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+    ) -> list[dict]:
+        """Return the raw API objects for issues that *issue_number* is blocking.
+
+        Uses ``GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The number of the issue whose dependents to fetch.
+        """
+        return self._paginate(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocking"
+        )
+
+    def add_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        blocking_issue_id: int,
+    ) -> dict:
+        """Record that *issue_number* is blocked by the issue with internal id *blocking_issue_id*.
+
+        Uses ``POST /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by``
+        with ``{"issue_id": blocking_issue_id}``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates for the blocked issue.
+        issue_number:
+            The issue number that is being blocked.
+        blocking_issue_id:
+            GitHub's internal integer ``id`` (not the human-readable ``number``)
+            of the issue that is doing the blocking.  This is the ``id`` field
+            returned by the Issues REST API.
+        """
+        return self._post(
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by",
+            json={"issue_id": blocking_issue_id},
+        )
+
+    def remove_issue_blocked_by(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        blocking_issue_id: int,
+    ) -> dict:
+        """Remove the 'blocked by' dependency between *issue_number* and *blocking_issue_id*.
+
+        Uses ``DELETE /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{issue_id}``.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates for the blocked issue.
+        issue_number:
+            The issue number whose blocker to remove.
+        blocking_issue_id:
+            GitHub's internal integer ``id`` of the blocking issue.
+        """
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by/{blocking_issue_id}".lstrip("/"),
+        )
+        response = self._session.delete(url)
+        response.raise_for_status()
+        return response.json()
+
     def update_issue_labels(
         self,
         owner: str,
@@ -660,7 +759,10 @@ class GitHubClient:
         labels:
             Full list of label names to set on the issue.
         """
-        url = urljoin(self._base_url, f"repos/{owner}/{repo}/issues/{issue_number}".lstrip("/"))
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/issues/{issue_number}".lstrip("/"),
+        )
         response = self._session.patch(url, json={"labels": labels})
         response.raise_for_status()
         return response.json()

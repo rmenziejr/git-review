@@ -38,6 +38,7 @@ class Issue:
     comments: int = 0
     assignees: list[str] = field(default_factory=list)
     milestone: Optional[str] = None
+    github_id: Optional[int] = None
 
 
 @dataclass

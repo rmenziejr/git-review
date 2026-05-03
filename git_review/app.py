@@ -499,6 +499,227 @@ def _submit_issues(
 
 
 # ---------------------------------------------------------------------------
+# Tab: Agile Planner
+# ---------------------------------------------------------------------------
+
+def _run_agile_planner(
+    github_token: str,
+    openai_key: str,
+    model: str,
+    base_url: str,
+    repo: str,
+    sprint_capacity: int,
+    num_sprints: int,
+    all_repos: bool,
+) -> tuple[str, str, str]:
+    """Run the agile planner and return (deps_md, plan_md, status)."""
+    repo = (repo or "").strip()
+    if not repo:
+        return "", "", "❌  Please enter the repository or owner."
+
+    effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not (base_url or "").strip():
+        return "", "", (
+            "❌  An OpenAI API key is required. "
+            "Enter it above or set OPENAI_API_KEY."
+        )
+
+    if all_repos:
+        owner = repo.split("/", 1)[0].strip()
+    else:
+        if "/" not in repo:
+            return "", "", "❌  Please enter the repository in 'owner/repo' format."
+        parts = repo.split("/", 1)
+        owner = parts[0]
+
+    from .agile_planner import AgilePlanner
+    gh = GitHubClient(token=github_token or None)
+    planner = AgilePlanner(
+        github_client=gh,
+        openai_api_key=effective_key or None,
+        model=(model or "gpt-4o-mini").strip(),
+        base_url=(base_url or "").strip() or None,
+        sprint_capacity=max(1, int(sprint_capacity or 10)),
+        num_sprints=max(1, int(num_sprints or 3)),
+    )
+
+    try:
+        if all_repos:
+            result = planner.analyse_org(owner)
+        else:
+            repo_name = repo.split("/", 1)[1]
+            result = planner.analyse(owner, repo_name)
+    except Exception as exc:
+        return "", "", f"❌  Error running agile analysis: {exc}"
+
+    # Build dependencies markdown
+    deps_lines: list[str] = []
+    if result.dependencies:
+        deps_lines.append("| Blocked Issue | Blocked By | Confidence | Source | Reason |")
+        deps_lines.append("|---------------|------------|------------|--------|--------|")
+        for dep in result.dependencies:
+            deps_lines.append(
+                f"| #{dep.from_issue} | #{dep.to_issue} "
+                f"| {dep.confidence:.0%} | {dep.source} | {dep.reason} |"
+            )
+    deps_md = "\n".join(deps_lines) if deps_lines else "_No dependencies identified._"
+
+    # Build sprint plan markdown
+    plan_lines: list[str] = []
+    issue_titles = {i.number: i.title for i in result.issues}
+    for sprint in result.sprints:
+        plan_lines.append(f"### Sprint {sprint.sprint_number}: {sprint.theme}")
+        plan_lines.append(sprint.rationale)
+        plan_lines.append("")
+        plan_lines.append("**Issues:**")
+        for num in sprint.issues:
+            plan_lines.append(f"- #{num} {issue_titles.get(num, '')}")
+        if sprint.deferred:
+            plan_lines.append("")
+            plan_lines.append("**Deferred:**")
+            for num in sprint.deferred:
+                plan_lines.append(f"- #{num} {issue_titles.get(num, '')}")
+        plan_lines.append("")
+
+    if result.summary_text:
+        plan_lines.append("---")
+        plan_lines.append("**Summary**")
+        plan_lines.append("")
+        plan_lines.append(result.summary_text)
+
+    plan_md = "\n".join(plan_lines) if plan_lines else "_No sprint plan generated._"
+
+    status = (
+        f"✅  Plan generated: {len(result.issues)} issues, "
+        f"{len(result.pull_requests)} PRs, "
+        f"{len(result.dependencies)} dependencies, "
+        f"{len(result.sprints)} sprints."
+    )
+    return deps_md, plan_md, status
+
+
+def _run_agile_planner_state(
+    github_token: str,
+    openai_key: str,
+    model: str,
+    base_url: str,
+    repo: str,
+    sprint_capacity: int,
+    num_sprints: int,
+    all_repos: bool,
+) -> Any:
+    """Same as _run_agile_planner but returns the AgilePlanResult for state storage."""
+    repo = (repo or "").strip()
+    if not repo:
+        return None
+
+    effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not (base_url or "").strip():
+        return None
+
+    if all_repos:
+        owner = repo.split("/", 1)[0].strip()
+    else:
+        if "/" not in repo:
+            return None
+        owner = repo.split("/", 1)[0]
+
+    from .agile_planner import AgilePlanner
+    gh = GitHubClient(token=github_token or None)
+    planner = AgilePlanner(
+        github_client=gh,
+        openai_api_key=effective_key or None,
+        model=(model or "gpt-4o-mini").strip(),
+        base_url=(base_url or "").strip() or None,
+        sprint_capacity=max(1, int(sprint_capacity or 10)),
+        num_sprints=max(1, int(num_sprints or 3)),
+    )
+
+    try:
+        if all_repos:
+            return planner.analyse_org(owner)
+        repo_name = repo.split("/", 1)[1]
+        return planner.analyse(owner, repo_name)
+    except Exception:
+        return None
+
+
+def _apply_agile_relationships(
+    github_token: str,
+    repo: str,
+    all_repos: bool,
+    result: Any,
+) -> str:
+    """Apply inferred blocking relationships to GitHub."""
+    if result is None:
+        return "❌  No plan available. Generate a plan first."
+
+    repo = (repo or "").strip()
+    if all_repos:
+        owner = repo.split("/", 1)[0].strip()
+        repo_name = "*"
+    else:
+        if "/" not in repo:
+            return "❌  Please enter the repository in 'owner/repo' format."
+        parts = repo.split("/", 1)
+        owner, repo_name = parts[0], parts[1]
+
+    new_rels = [d for d in result.dependencies if d.source == "llm"]
+    if not new_rels:
+        return "ℹ️  No new inferred relationships to record."
+
+    from .agile_planner import AgilePlanner
+    gh = GitHubClient(token=github_token or None)
+    planner = AgilePlanner(github_client=gh, openai_api_key="unused")
+
+    try:
+        responses = planner.apply_relationships(owner, repo_name, result, dry_run=False)
+    except Exception as exc:
+        return f"❌  Error recording relationships: {exc}"
+
+    return f"✅  Recorded {len(responses)} blocking relationship(s) in GitHub."
+
+
+def _apply_agile_labels(
+    github_token: str,
+    repo: str,
+    all_repos: bool,
+    result: Any,
+) -> str:
+    """Apply priority label recommendations to GitHub issues."""
+    if result is None:
+        return "❌  No plan available. Generate a plan first."
+
+    repo = (repo or "").strip()
+    if all_repos:
+        owner = repo.split("/", 1)[0].strip()
+        repo_name = "*"
+    else:
+        if "/" not in repo:
+            return "❌  Please enter the repository in 'owner/repo' format."
+        parts = repo.split("/", 1)
+        owner, repo_name = parts[0], parts[1]
+
+    label_issues = [
+        i for i in result.issues
+        if result.label_recommendations.get(i.number)
+    ]
+    if not label_issues:
+        return "ℹ️  No priority label recommendations to apply."
+
+    from .agile_planner import AgilePlanner
+    gh = GitHubClient(token=github_token or None)
+    planner = AgilePlanner(github_client=gh, openai_api_key="unused")
+
+    try:
+        responses = planner.apply_labels(owner, repo_name, result, dry_run=False)
+    except Exception as exc:
+        return f"❌  Error applying labels: {exc}"
+
+    return f"✅  Updated labels on {len(responses)} issue(s)."
+
+
+# ---------------------------------------------------------------------------
 # Build the Gradio UI
 # ---------------------------------------------------------------------------
 
@@ -785,6 +1006,93 @@ def build_app() -> gr.Blocks:
                     fn=_submit_issues,
                     inputs=[github_token, submit_repo, submit_milestone, submit_table],
                     outputs=submit_output,
+                )
+
+            # ── Tab 5: Agile Planner ──────────────────────────────────
+            with gr.Tab("🗂️ Agile Planner"):
+                gr.Markdown(
+                    "Fetch all open issues and PRs, read existing GitHub blocking "
+                    "relationships, and generate an AI-powered sprint plan.  "
+                    "New inferred blocking relationships can be written back to "
+                    "GitHub via the native dependency API."
+                )
+                with gr.Row():
+                    agile_repo = gr.Textbox(
+                        label="Repository (owner/repo) or Owner",
+                        placeholder="myorg/myrepo",
+                    )
+                    agile_all_repos = gr.Checkbox(
+                        label="Plan all repositories for this owner",
+                        value=False,
+                    )
+                with gr.Row():
+                    agile_capacity = gr.Number(
+                        label="Sprint capacity (max issues/sprint)",
+                        value=10,
+                        minimum=1,
+                        maximum=100,
+                        precision=0,
+                    )
+                    agile_sprints = gr.Number(
+                        label="Number of sprints to plan",
+                        value=3,
+                        minimum=1,
+                        maximum=10,
+                        precision=0,
+                    )
+
+                agile_plan_btn = gr.Button("Generate Sprint Plan", variant="primary")
+                agile_status = gr.Textbox(label="Status", interactive=False)
+                agile_deps_output = gr.Markdown(label="Dependency Graph")
+                agile_plan_output = gr.Markdown(label="Sprint Plan")
+
+                gr.Markdown("---")
+                gr.Markdown("### Apply Changes")
+                gr.Markdown(
+                    "After reviewing the plan, you can write new inferred blocking "
+                    "relationships back to GitHub, and apply priority label recommendations."
+                )
+                with gr.Row():
+                    agile_apply_rels_btn = gr.Button(
+                        "Record Blocking Relationships in GitHub", variant="secondary"
+                    )
+                    agile_apply_labels_btn = gr.Button(
+                        "Apply Priority Labels", variant="secondary"
+                    )
+                agile_apply_status = gr.Textbox(label="Apply Status", interactive=False)
+
+                # Wire plan button
+                agile_plan_btn.click(
+                    fn=_run_agile_planner,
+                    inputs=[
+                        github_token, openai_key, model, base_url,
+                        agile_repo, agile_capacity, agile_sprints, agile_all_repos,
+                    ],
+                    outputs=[agile_deps_output, agile_plan_output, agile_status],
+                )
+
+                # Wire apply buttons using state stored during planning
+                _agile_result_state = gr.State(None)
+
+                agile_plan_btn.click(
+                    fn=_run_agile_planner_state,
+                    inputs=[
+                        github_token, openai_key, model, base_url,
+                        agile_repo, agile_capacity, agile_sprints, agile_all_repos,
+                    ],
+                    outputs=_agile_result_state,
+                )
+
+                agile_apply_rels_btn.click(
+                    fn=_apply_agile_relationships,
+                    inputs=[github_token, agile_repo, agile_all_repos, _agile_result_state],
+                    outputs=agile_apply_status,
+                )
+
+                agile_apply_labels_btn.click(
+                    fn=_apply_agile_labels,
+                    inputs=[github_token, agile_repo, agile_all_repos, _agile_result_state],
+                    outputs=agile_apply_status,
                 )
 
     return app

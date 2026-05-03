@@ -39,7 +39,7 @@ from .commit_message_generator import CommitMessageGenerator, get_git_diff
 from .github_client import GitHubClient
 from .issue_factory import IssueFactory, IssueDraft
 from .llm_client import LLMClient
-from .models import Commit, Contributor, Issue, PullRequest, Release, ReviewSummary
+from .models import Commit, Contributor, Issue, IssueDependency, PullRequest, Release, ReviewSummary, SprintRecommendation
 from .prompt_utils import load_prompt_file, validate_prompt_template
 from .tables import render_review_tables
 
@@ -1168,3 +1168,424 @@ def commit_message(
             console.print(f"[red]git commit failed:[/red] {exc}")
             sys.exit(1)
         console.print("[bold green]Committed successfully.[/bold green]")
+
+
+# ---------------------------------------------------------------------------
+# agile command
+# ---------------------------------------------------------------------------
+
+@main.command("agile")
+@click.option(
+    "--repo",
+    default=None,
+    envvar="GITREVIEW_REPO",
+    metavar="OWNER/REPO",
+    help="GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--owner",
+    default=None,
+    metavar="OWNER",
+    help="GitHub user or organisation – plans ALL non-archived repos.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub personal access token (or set GITHUB_TOKEN env var).",
+)
+@click.option(
+    "--openai-key",
+    envvar="OPENAI_API_KEY",
+    default=None,
+    help="OpenAI API key (or set OPENAI_API_KEY env var).",
+)
+@click.option(
+    "--model",
+    default="gpt-4o-mini",
+    show_default=True,
+    envvar="GIT_REVIEW_MODEL",
+    help="LLM model to use.",
+)
+@click.option(
+    "--base-url",
+    envvar="OPENAI_BASE_URL",
+    default=None,
+    help="Custom OpenAI-compatible API base URL.",
+)
+@click.option(
+    "--sprint-capacity",
+    default=10,
+    show_default=True,
+    type=int,
+    metavar="N",
+    help="Maximum number of issues per sprint.",
+)
+@click.option(
+    "--sprints",
+    default=3,
+    show_default=True,
+    type=int,
+    metavar="N",
+    help="Number of future sprints to plan.",
+)
+@click.option(
+    "--no-summary",
+    is_flag=True,
+    default=False,
+    help="Skip LLM and only show open issues/PRs tables.",
+)
+@click.option(
+    "--apply-relationships",
+    "apply_relationships",
+    is_flag=True,
+    default=False,
+    help=(
+        "Write new inferred blocking relationships back to GitHub via the "
+        "native dependency API.  Prompts for confirmation first."
+    ),
+)
+@click.option(
+    "--apply-labels",
+    "apply_labels",
+    is_flag=True,
+    default=False,
+    help="Apply priority label recommendations back to GitHub issues.  Prompts for confirmation first.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --apply-relationships or --apply-labels, print what would change "
+        "without making any API calls."
+    ),
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_file",
+    default=None,
+    metavar="FILE",
+    help="Write the full plan to a markdown file.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def agile(
+    repo: Optional[str],
+    owner: Optional[str],
+    token: Optional[str],
+    openai_key: Optional[str],
+    model: str,
+    base_url: Optional[str],
+    sprint_capacity: int,
+    sprints: int,
+    no_summary: bool,
+    apply_relationships: bool,
+    apply_labels: bool,
+    dry_run: bool,
+    output_file: Optional[str],
+    verbose: bool,
+) -> None:
+    """Fetch open issues/PRs and generate an AI-powered sprint plan.
+
+    Provide either --repo OWNER/REPO for a single repository, or --owner OWNER
+    to plan across all non-archived repositories for that user or organisation.
+
+    The LLM identifies blocking/blocked-by dependencies between issues (both
+    by reading issue bodies and by semantic inference) and proposes a sprint
+    backlog respecting those dependencies.  New blocking relationships can be
+    written back to GitHub via the native issue-dependencies API using
+    --apply-relationships.
+    """
+    from .agile_planner import AgilePlanner
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if repo and owner:
+        raise click.UsageError("Provide either --repo or --owner, not both.")
+    if not repo and not owner:
+        raise click.UsageError("Provide one of --repo OWNER/REPO or --owner OWNER.")
+
+    gh = GitHubClient(token=token)
+
+    if repo:
+        parts = repo.split("/", 1)
+        if len(parts) != 2 or not all(parts):
+            raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+        resolved_owner, repo_name = parts[0], parts[1]
+        org_mode = False
+    else:
+        resolved_owner = owner  # type: ignore[assignment]
+        repo_name = "*"
+        org_mode = True
+
+    # --- Show open issues/PRs table (no LLM required) -----------------
+    if no_summary:
+        with console.status("[bold green]Fetching open issues and PRs…"):
+            try:
+                if org_mode:
+                    repo_names = gh.list_repos(resolved_owner)
+                    all_issues: list[Issue] = []
+                    all_prs: list[PullRequest] = []
+                    for rn in repo_names:
+                        all_issues.extend(gh.get_open_issues(resolved_owner, rn))
+                        all_prs.extend(gh.get_open_pull_requests(resolved_owner, rn))
+                else:
+                    all_issues = gh.get_open_issues(resolved_owner, repo_name)
+                    all_prs = gh.get_open_pull_requests(resolved_owner, repo_name)
+            except Exception as exc:
+                console.print(f"[red]Error fetching data:[/red] {exc}")
+                sys.exit(1)
+
+        _print_agile_issues_table(all_issues, show_repo=org_mode)
+        _print_agile_prs_table(all_prs, show_repo=org_mode)
+        return
+
+    # --- LLM planning ---------------------------------------------------
+    effective_key = openai_key or os.environ.get("OPENAI_API_KEY")
+    if not effective_key and not base_url:
+        console.print(
+            "\n[yellow]⚠  No OpenAI API key found.[/yellow]  "
+            "Pass [bold]--openai-key[/bold] or set [bold]OPENAI_API_KEY[/bold].\n"
+        )
+        return
+
+    planner = AgilePlanner(
+        github_client=gh,
+        openai_api_key=effective_key,
+        model=model,
+        base_url=base_url,
+        sprint_capacity=sprint_capacity,
+        num_sprints=sprints,
+    )
+
+    with console.status("[bold green]Fetching issues, PRs, and existing dependencies…"):
+        try:
+            if org_mode:
+                result = planner.analyse_org(resolved_owner)
+            else:
+                result = planner.analyse(resolved_owner, repo_name)
+        except Exception as exc:
+            console.print(f"[red]Error running agile analysis:[/red] {exc}")
+            sys.exit(1)
+
+    # --- Print tables ---------------------------------------------------
+    show_repo = org_mode or result.repo == "*"
+    _print_agile_issues_table(result.issues, show_repo=show_repo)
+    _print_agile_prs_table(result.pull_requests, show_repo=show_repo)
+    _print_dependency_table(result.dependencies)
+    _print_sprint_panels(result.sprints, result.issues)
+
+    # --- Summary panel --------------------------------------------------
+    if result.summary_text:
+        console.print()
+        console.print(
+            Panel(
+                Markdown(result.summary_text),
+                title="[bold cyan]Agile Plan Summary[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+
+    # --- Apply relationships --------------------------------------------
+    if apply_relationships:
+        new_rels = [d for d in result.dependencies if d.source == "llm"]
+        if not new_rels:
+            console.print("\n[dim]No new inferred relationships to apply.[/dim]")
+        elif dry_run:
+            console.print(f"\n[dim]Dry-run: {len(new_rels)} relationship(s) would be recorded.[/dim]")
+            planner.apply_relationships(resolved_owner, repo_name, result, dry_run=True)
+        else:
+            console.print(
+                f"\n[yellow]{len(new_rels)} new blocking relationship(s) inferred.[/yellow]"
+            )
+            if click.confirm("Record these in GitHub's dependency API?", default=False):
+                with console.status("[bold green]Recording relationships…"):
+                    responses = planner.apply_relationships(
+                        resolved_owner, repo_name, result, dry_run=False
+                    )
+                console.print(f"[green]✓ Recorded {len(responses)} relationship(s).[/green]")
+
+    # --- Apply labels ---------------------------------------------------
+    if apply_labels:
+        label_issues = [
+            i for i in result.issues
+            if result.label_recommendations.get(i.number)
+        ]
+        if not label_issues:
+            console.print("\n[dim]No label recommendations to apply.[/dim]")
+        elif dry_run:
+            console.print(
+                f"\n[dim]Dry-run: labels would be updated on "
+                f"{len(label_issues)} issue(s).[/dim]"
+            )
+            planner.apply_labels(resolved_owner, repo_name, result, dry_run=True)
+        else:
+            console.print(f"\n[yellow]{len(label_issues)} issue(s) have label recommendations.[/yellow]")
+            if click.confirm("Apply priority labels to these issues?", default=False):
+                with console.status("[bold green]Applying labels…"):
+                    responses = planner.apply_labels(
+                        resolved_owner, repo_name, result, dry_run=False
+                    )
+                console.print(f"[green]✓ Updated labels on {len(responses)} issue(s).[/green]")
+
+    # --- Output file ----------------------------------------------------
+    if output_file and result.summary_text:
+        md_lines = [f"# Agile Plan: {resolved_owner}/{result.repo}\n"]
+
+        if result.dependencies:
+            md_lines.append("## Dependencies\n")
+            md_lines.append("| From | Relationship | To | Confidence | Source | Reason |")
+            md_lines.append("|------|-------------|-----|------------|--------|--------|")
+            for dep in result.dependencies:
+                md_lines.append(
+                    f"| #{dep.from_issue} | {dep.dep_type} | #{dep.to_issue} "
+                    f"| {dep.confidence:.0%} | {dep.source} | {dep.reason} |"
+                )
+            md_lines.append("")
+
+        for sprint in result.sprints:
+            md_lines.append(f"## Sprint {sprint.sprint_number}: {sprint.theme}\n")
+            md_lines.append(sprint.rationale + "\n")
+            md_lines.append("**Issues:** " + ", ".join(f"#{n}" for n in sprint.issues) + "\n")
+            if sprint.deferred:
+                md_lines.append("**Deferred:** " + ", ".join(f"#{n}" for n in sprint.deferred) + "\n")
+
+        md_lines.append("## Summary\n")
+        md_lines.append(result.summary_text)
+
+        try:
+            with open(output_file, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(md_lines))
+            console.print(f"\n[green]✓ Plan written to[/green] {output_file}")
+        except OSError as exc:
+            console.print(f"[red]Error writing output file:[/red] {exc}")
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Agile output helpers
+# ---------------------------------------------------------------------------
+
+def _print_agile_issues_table(issues: list[Issue], *, show_repo: bool = False) -> None:
+    if not issues:
+        console.print("[dim]No open issues found.[/dim]\n")
+        return
+
+    table = Table(title=f"Open Issues ({len(issues)})", show_lines=False)
+    table.add_column("#", justify="right", style="dim", width=6)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Labels")
+    table.add_column("Assignees", no_wrap=True)
+    table.add_column("Milestone", no_wrap=True)
+
+    for issue in issues:
+        row = [str(issue.number)]
+        if show_repo:
+            row.append(issue.repo)
+        row += [
+            issue.title[:70] + ("…" if len(issue.title) > 70 else ""),
+            ", ".join(issue.labels) or "—",
+            ", ".join(issue.assignees) or "—",
+            issue.milestone or "—",
+        ]
+        table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_agile_prs_table(prs: list[PullRequest], *, show_repo: bool = False) -> None:
+    if not prs:
+        console.print("[dim]No open pull requests found.[/dim]\n")
+        return
+
+    table = Table(title=f"Open Pull Requests ({len(prs)})", show_lines=False)
+    table.add_column("#", justify="right", style="dim", width=6)
+    if show_repo:
+        table.add_column("Repo", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Author", no_wrap=True)
+    table.add_column("Draft", width=6)
+
+    for pr in prs:
+        row = [str(pr.number)]
+        if show_repo:
+            row.append(pr.repo)
+        row += [
+            pr.title[:70] + ("…" if len(pr.title) > 70 else ""),
+            pr.author,
+            "[yellow]yes[/yellow]" if pr.draft else "no",
+        ]
+        table.add_row(*row)
+    console.print(table)
+    console.print()
+
+
+def _print_dependency_table(deps: list[IssueDependency]) -> None:
+    if not deps:
+        return
+
+    table = Table(title=f"Dependencies ({len(deps)})", show_lines=False)
+    table.add_column("Blocked", justify="right", style="dim", width=8)
+    table.add_column("Blocked By", justify="right", style="dim", width=10)
+    table.add_column("Confidence", justify="right", width=11)
+    table.add_column("Source", width=9)
+    table.add_column("Reason")
+
+    source_styles = {"github": "green", "explicit": "cyan", "llm": "magenta"}
+    for dep in deps:
+        style = source_styles.get(dep.source, "white")
+        table.add_row(
+            f"#{dep.from_issue}",
+            f"#{dep.to_issue}",
+            f"{dep.confidence:.0%}",
+            f"[{style}]{dep.source}[/{style}]",
+            dep.reason[:80] + ("…" if len(dep.reason) > 80 else ""),
+        )
+    console.print(table)
+    console.print()
+
+
+def _print_sprint_panels(
+    sprints: list[SprintRecommendation],
+    issues: list[Issue],
+) -> None:
+    if not sprints:
+        return
+
+    issue_titles = {i.number: i.title for i in issues}
+
+    for sprint in sprints:
+        lines = [f"[bold]Theme:[/bold] {sprint.theme}", ""]
+        lines.append(sprint.rationale)
+        lines.append("")
+        lines.append("[bold]Issues:[/bold]")
+        for num in sprint.issues:
+            title = issue_titles.get(num, "")
+            lines.append(f"  [green]#{num}[/green]  {title[:60]}" + ("…" if len(title) > 60 else ""))
+        if sprint.deferred:
+            lines.append("")
+            lines.append("[bold]Deferred from this sprint:[/bold]")
+            for num in sprint.deferred:
+                title = issue_titles.get(num, "")
+                lines.append(f"  [dim]#{num}[/dim]  {title[:60]}" + ("…" if len(title) > 60 else ""))
+
+        console.print(
+            Panel(
+                "\n".join(lines),
+                title=f"[bold blue]Sprint {sprint.sprint_number}[/bold blue]",
+                border_style="blue",
+                padding=(1, 2),
+            )
+        )
+        console.print()

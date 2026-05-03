@@ -502,6 +502,9 @@ def _submit_issues(
 # Tab: Agile Planner
 # ---------------------------------------------------------------------------
 
+from .agile_planner import resolve_agile_target as _resolve_agile_target_from_input
+
+
 def _run_agile_planner(
     github_token: str,
     openai_key: str,
@@ -513,9 +516,10 @@ def _run_agile_planner(
     all_repos: bool,
 ) -> tuple[str, str, str]:
     """Run the agile planner and return (deps_md, plan_md, status)."""
-    repo = (repo or "").strip()
-    if not repo:
-        return "", "", "❌  Please enter the repository or owner."
+    try:
+        owner, repo_name, org_mode = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return "", "", f"❌  {exc}"
 
     effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
     if not effective_key and not (base_url or "").strip():
@@ -523,14 +527,6 @@ def _run_agile_planner(
             "❌  An OpenAI API key is required. "
             "Enter it above or set OPENAI_API_KEY."
         )
-
-    if all_repos:
-        owner = repo.split("/", 1)[0].strip()
-    else:
-        if "/" not in repo:
-            return "", "", "❌  Please enter the repository in 'owner/repo' format."
-        parts = repo.split("/", 1)
-        owner = parts[0]
 
     from .agile_planner import AgilePlanner
     gh = GitHubClient(token=github_token or None)
@@ -544,10 +540,9 @@ def _run_agile_planner(
     )
 
     try:
-        if all_repos:
+        if org_mode:
             result = planner.analyse_org(owner)
         else:
-            repo_name = repo.split("/", 1)[1]
             result = planner.analyse(owner, repo_name)
     except Exception as exc:
         return "", "", f"❌  Error running agile analysis: {exc}"
@@ -609,20 +604,14 @@ def _run_agile_planner_state(
     all_repos: bool,
 ) -> Any:
     """Same as _run_agile_planner but returns the AgilePlanResult for state storage."""
-    repo = (repo or "").strip()
-    if not repo:
+    try:
+        owner, repo_name, org_mode = _resolve_agile_target_from_input(repo)
+    except ValueError:
         return None
 
     effective_key = (openai_key or "").strip() or os.environ.get("OPENAI_API_KEY")
     if not effective_key and not (base_url or "").strip():
         return None
-
-    if all_repos:
-        owner = repo.split("/", 1)[0].strip()
-    else:
-        if "/" not in repo:
-            return None
-        owner = repo.split("/", 1)[0]
 
     from .agile_planner import AgilePlanner
     gh = GitHubClient(token=github_token or None)
@@ -636,9 +625,8 @@ def _run_agile_planner_state(
     )
 
     try:
-        if all_repos:
+        if org_mode:
             return planner.analyse_org(owner)
-        repo_name = repo.split("/", 1)[1]
         return planner.analyse(owner, repo_name)
     except Exception:
         return None
@@ -654,15 +642,10 @@ def _apply_agile_relationships(
     if result is None:
         return "❌  No plan available. Generate a plan first."
 
-    repo = (repo or "").strip()
-    if all_repos:
-        owner = repo.split("/", 1)[0].strip()
-        repo_name = "*"
-    else:
-        if "/" not in repo:
-            return "❌  Please enter the repository in 'owner/repo' format."
-        parts = repo.split("/", 1)
-        owner, repo_name = parts[0], parts[1]
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return f"❌  {exc}"
 
     new_rels = [d for d in result.dependencies if d.source == "llm"]
     if not new_rels:
@@ -690,15 +673,10 @@ def _apply_agile_labels(
     if result is None:
         return "❌  No plan available. Generate a plan first."
 
-    repo = (repo or "").strip()
-    if all_repos:
-        owner = repo.split("/", 1)[0].strip()
-        repo_name = "*"
-    else:
-        if "/" not in repo:
-            return "❌  Please enter the repository in 'owner/repo' format."
-        parts = repo.split("/", 1)
-        owner, repo_name = parts[0], parts[1]
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return f"❌  {exc}"
 
     label_issues = [
         i for i in result.issues
@@ -1018,12 +996,17 @@ def build_app() -> gr.Blocks:
                 )
                 with gr.Row():
                     agile_repo = gr.Textbox(
-                        label="Repository (owner/repo) or Owner",
-                        placeholder="myorg/myrepo",
+                        label="Repository or Owner",
+                        placeholder="myorg/myrepo  or  myorg/*  or  myorg",
+                        info=(
+                            "Single repo: owner/repo · "
+                            "All repos for an org: owner/* or just owner"
+                        ),
                     )
                     agile_all_repos = gr.Checkbox(
                         label="Plan all repositories for this owner",
                         value=False,
+                        visible=False,
                     )
                 with gr.Row():
                     agile_capacity = gr.Number(

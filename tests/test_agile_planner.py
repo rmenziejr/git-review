@@ -551,3 +551,100 @@ def test_sprint_recommendation_defaults() -> None:
     assert sprint.issues == []
     assert sprint.deferred == []
     assert sprint.theme == ""
+
+
+# ---------------------------------------------------------------------------
+# Target resolution helpers
+# ---------------------------------------------------------------------------
+
+
+def test_cli_resolve_single_repo() -> None:
+    from git_review.cli import _resolve_agile_target
+    owner, repo_name, org_mode = _resolve_agile_target("acme/myrepo", None)
+    assert owner == "acme"
+    assert repo_name == "myrepo"
+    assert org_mode is False
+
+
+def test_cli_resolve_org_wildcard() -> None:
+    from git_review.cli import _resolve_agile_target
+    owner, repo_name, org_mode = _resolve_agile_target("acme/*", None)
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_cli_resolve_bare_owner_via_repo() -> None:
+    from git_review.cli import _resolve_agile_target
+    owner, repo_name, org_mode = _resolve_agile_target("acme", None)
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_cli_resolve_owner_flag() -> None:
+    from git_review.cli import _resolve_agile_target
+    owner, repo_name, org_mode = _resolve_agile_target(None, "acme")
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_cli_resolve_trailing_slash() -> None:
+    from git_review.cli import _resolve_agile_target
+    owner, repo_name, org_mode = _resolve_agile_target("acme/", None)
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_cli_resolve_both_raises() -> None:
+    import click
+    from git_review.cli import _resolve_agile_target
+    with pytest.raises(click.UsageError):
+        _resolve_agile_target("acme/other", "acme")
+
+
+def test_cli_resolve_neither_raises() -> None:
+    import click
+    from git_review.cli import _resolve_agile_target
+    with pytest.raises(click.UsageError):
+        _resolve_agile_target(None, None)
+
+
+def test_app_resolve_single_repo() -> None:
+    from git_review.agile_planner import resolve_agile_target
+    owner, repo_name, org_mode = resolve_agile_target("acme/myrepo")
+    assert owner == "acme"
+    assert repo_name == "myrepo"
+    assert org_mode is False
+
+
+def test_app_resolve_org_wildcard() -> None:
+    from git_review.agile_planner import resolve_agile_target
+    owner, repo_name, org_mode = resolve_agile_target("acme/*")
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_app_resolve_bare_owner() -> None:
+    from git_review.agile_planner import resolve_agile_target
+    owner, repo_name, org_mode = resolve_agile_target("acme")
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_app_resolve_trailing_slash() -> None:
+    from git_review.agile_planner import resolve_agile_target
+    owner, repo_name, org_mode = resolve_agile_target("acme/")
+    assert owner == "acme"
+    assert repo_name == "*"
+    assert org_mode is True
+
+
+def test_app_resolve_empty_raises() -> None:
+    from git_review.agile_planner import resolve_agile_target
+    with pytest.raises(ValueError):
+        resolve_agile_target("")

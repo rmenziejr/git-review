@@ -1174,19 +1174,70 @@ def commit_message(
 # agile command
 # ---------------------------------------------------------------------------
 
+def _resolve_agile_target(
+    repo: Optional[str],
+    owner: Optional[str],
+) -> tuple[str, str, bool]:
+    """Resolve (resolved_owner, repo_name, org_mode) from --repo / --owner.
+
+    Accepted ``--repo`` formats:
+    - ``owner/repo``   → single-repo mode
+    - ``owner/*``      → org mode (all repos for that owner)
+    - ``owner``        → org mode (no slash at all)
+
+    ``--owner owner`` always means org mode.
+
+    Raises :class:`click.UsageError` when the input is ambiguous or missing.
+    """
+    if repo and owner:
+        # Allow "owner/*" with --owner for convenience, but not two different
+        # values pointing to different targets.
+        repo_stripped = repo.strip()
+        if repo_stripped == f"{owner}/*" or repo_stripped == owner:
+            return owner, "*", True
+        raise click.UsageError("Provide either --repo or --owner, not both.")
+
+    if owner:
+        return owner, "*", True
+
+    if repo:
+        repo = repo.strip()
+        if "/" not in repo:
+            # Bare "owner" with no slash → org mode
+            return repo, "*", True
+        owner_part, repo_part = repo.split("/", 1)
+        if repo_part in ("*", ""):
+            # "owner/*" or "owner/" → org mode
+            return owner_part, "*", True
+        # "owner/repo" → single repo
+        return owner_part, repo_part, False
+
+    raise click.UsageError(
+        "Provide one of:\n"
+        "  --repo owner/repo       (single repository)\n"
+        "  --repo owner/*          (all repos for owner)\n"
+        "  --repo owner            (all repos for owner)\n"
+        "  --owner owner           (all repos for owner)"
+    )
+
+
 @main.command("agile")
 @click.option(
     "--repo",
     default=None,
     envvar="GITREVIEW_REPO",
     metavar="OWNER/REPO",
-    help="GitHub repository in 'owner/repo' format.",
+    help=(
+        "GitHub repository ('owner/repo'), org wildcard ('owner/*'), "
+        "or bare owner ('owner') for all repos.  "
+        "Mutually exclusive with --owner."
+    ),
 )
 @click.option(
     "--owner",
     default=None,
     metavar="OWNER",
-    help="GitHub user or organisation – plans ALL non-archived repos.",
+    help="GitHub user or organisation – plans ALL non-archived repos.  Mutually exclusive with --repo.",
 )
 @click.option(
     "--token",
@@ -1294,8 +1345,12 @@ def agile(
 ) -> None:
     """Fetch open issues/PRs and generate an AI-powered sprint plan.
 
-    Provide either --repo OWNER/REPO for a single repository, or --owner OWNER
-    to plan across all non-archived repositories for that user or organisation.
+    \b
+    Target selection (pick one):
+      --repo owner/repo    single repository
+      --repo owner/*       all repos for an owner/org
+      --repo owner         all repos for an owner/org (bare form)
+      --owner owner        all repos for an owner/org
 
     The LLM identifies blocking/blocked-by dependencies between issues (both
     by reading issue bodies and by semantic inference) and proposes a sprint
@@ -1308,23 +1363,12 @@ def agile(
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
 
-    if repo and owner:
-        raise click.UsageError("Provide either --repo or --owner, not both.")
-    if not repo and not owner:
-        raise click.UsageError("Provide one of --repo OWNER/REPO or --owner OWNER.")
+    try:
+        resolved_owner, repo_name, org_mode = _resolve_agile_target(repo, owner)
+    except click.UsageError:
+        raise
 
     gh = GitHubClient(token=token)
-
-    if repo:
-        parts = repo.split("/", 1)
-        if len(parts) != 2 or not all(parts):
-            raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
-        resolved_owner, repo_name = parts[0], parts[1]
-        org_mode = False
-    else:
-        resolved_owner = owner  # type: ignore[assignment]
-        repo_name = "*"
-        org_mode = True
 
     # --- Show open issues/PRs table (no LLM required) -----------------
     if no_summary:

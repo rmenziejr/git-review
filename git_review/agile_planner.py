@@ -696,3 +696,32 @@ def _trim(text: str, max_len: int = 200) -> str:
         return cleaned
     return cleaned[: max_len - 1] + "…"
 
+
+def resolve_agile_target(repo_input: str) -> tuple[str, str, bool]:
+    """Resolve ``(owner, repo_name, org_mode)`` from a free-form repo string.
+
+    Accepted formats
+    ----------------
+    - ``owner/repo``   → single-repo mode   → ``(owner, repo, False)``
+    - ``owner/*``      → org mode           → ``(owner, "*", True)``
+    - ``owner/``       → org mode           → ``(owner, "*", True)``
+    - ``owner``        → org mode           → ``(owner, "*", True)``
+
+    Raises ``ValueError`` with a human-readable message if *repo_input* is empty.
+
+    This function is shared between the Gradio app backend and can be used
+    standalone.  For the CLI, see :func:`git_review.cli._resolve_agile_target`.
+    """
+    repo_input = (repo_input or "").strip()
+    if not repo_input:
+        raise ValueError(
+            "Please enter a repository ('owner/repo'), "
+            "org wildcard ('owner/*'), or owner name."
+        )
+    if "/" not in repo_input:
+        return repo_input, "*", True
+    owner_part, repo_part = repo_input.split("/", 1)
+    if repo_part in ("*", ""):
+        return owner_part, "*", True
+    return owner_part, repo_part, False
+

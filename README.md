@@ -241,11 +241,13 @@ git-review create-issues --repo owner/repo --requirements requirements.md \
 # Generate a sprint plan for a single repo (table + LLM analysis)
 git-review agile --repo owner/repo --token ghp_xxx --openai-key sk-xxx
 
+# Org-level plan — plan across ALL repos for an owner (three equivalent forms):
+git-review agile --repo owner/*   --token ghp_xxx --openai-key sk-xxx
+git-review agile --repo owner     --token ghp_xxx --openai-key sk-xxx
+git-review agile --owner owner    --token ghp_xxx --openai-key sk-xxx
+
 # Show only open issues/PRs without running the LLM
 git-review agile --repo owner/repo --token ghp_xxx --no-summary
-
-# Plan across all repos for an org
-git-review agile --owner myorg --token ghp_xxx --openai-key sk-xxx
 
 # Customise sprint size and number of sprints
 git-review agile --repo owner/repo --sprint-capacity 8 --sprints 4 \

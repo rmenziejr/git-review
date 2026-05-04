@@ -43,6 +43,7 @@ class AppSettings(BaseSettings):
     ``openai_api_key``      ``OPENAI_API_KEY``
     ``git_review_model``    ``GIT_REVIEW_MODEL``
     ``openai_base_url``     ``OPENAI_BASE_URL``
+    ``agent_model``         ``AGENT_MODEL``
     ``gradio_server_name``  ``GRADIO_SERVER_NAME``
     ``gradio_server_port``  ``GRADIO_SERVER_PORT``
     ======================  =======================
@@ -73,6 +74,13 @@ class AppSettings(BaseSettings):
         description=(
             "Custom OpenAI-compatible API base URL "
             "(e.g. 'http://localhost:11434/v1' for Ollama)."
+        ),
+    )
+    agent_model: str = Field(
+        default="gpt-4o",
+        description=(
+            "LLM model identifier used by the conversational agent "
+            "(e.g. 'gpt-4o', 'gpt-4o-mini')."
         ),
     )
     gradio_server_name: str = Field(

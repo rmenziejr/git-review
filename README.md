@@ -20,6 +20,7 @@ directly inside your editor.
 - [Configuration](#configuration)
 - [Quick Start](#quick-start)
 - [Web App (Gradio)](#web-app-gradio)
+- [Agent & Reflex UI](#agent--reflex-ui)
 - [VS Code Extension](#vs-code-extension)
 - [Python SDK](#python-sdk)
 - [Project Layout](#project-layout)
@@ -46,6 +47,8 @@ directly inside your editor.
 | **Thinking mode** | Extended reasoning for commit-message generation with `--think` |
 | **Rich terminal output** | Colour-coded tables and a formatted summary panel |
 | **Gradio web app** | Browser-based UI with tabs for activity summary, milestones, requirements parsing, issue submission, and agile planning |
+| **Conversational agent** | OpenAI Agents SDK–powered assistant that can list, create, and update issues and PRs with streaming thoughts, tool-call UX, and human-in-the-loop approval for write operations |
+| **Reflex frontend** | React-based chat UI (served by Reflex) with live streaming, collapsible tool-call cards, reasoning/thinking indicators, and an HITL approval panel |
 | **Python SDK** | Use `GitHubClient`, `LLMClient`, and `AgilePlanner` directly in your own code |
 | **VS Code extension** | Run all commands from the Command Palette inside VS Code |
 
@@ -333,6 +336,108 @@ with two additional variables for the server:
 
 ---
 
+## Agent & Reflex UI
+
+git-review ships a conversational AI agent built on the
+[OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with a
+[Reflex](https://reflex.dev/) React frontend.  The agent can list, search,
+create, and update GitHub issues and pull requests, generate sprint plans, and
+parse requirements into issue drafts — all through a streaming chat interface.
+
+### Installing the agent
+
+```bash
+pip install 'git-review[agent]'
+```
+
+### Launching the agent UI
+
+```bash
+git-review-agent
+```
+
+Reflex will compile the frontend (Node.js is required on first run) and open
+the app at `http://localhost:3000`.
+
+### Configuring the agent
+
+Open the ⚙ Settings panel in the UI (top-right corner) or set the following
+environment variables / `.env` entries:
+
+| Variable | Description | Default |
+|---|---|---|
+| `GITHUB_TOKEN` | GitHub personal access token | — |
+| `OPENAI_API_KEY` | OpenAI API key | — |
+| `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL (Ollama, Azure, etc.) | — |
+| `AGENT_MODEL` | LLM model used by the agent | `gpt-4o` |
+
+### Streaming UX
+
+| Element | Description |
+|---|---|
+| **Chat thread** | Markdown-rendered messages scroll in real time as the model generates them |
+| **Thinking indicator** | Animated dots show while the agent is processing |
+| **Reasoning cards** | Collapsible accordion cards display the model's chain-of-thought (when using a reasoning model) |
+| **Tool-call cards** | Each tool invocation appears inline with its arguments and result |
+| **HITL approval panel** | Any write operation (create issue, create PR, update issue/PR, mark PR ready) pauses and shows an **Approve / Deny** panel before executing |
+
+### Human-in-the-loop (HITL) flow
+
+1. The agent decides to call a write tool (e.g. `push_issue_draft`).
+2. The run **pauses automatically** — no GitHub mutation has happened yet.
+3. A prominent approval card appears above the chat input showing the tool
+   name and its arguments.
+4. Click **Approve** to execute the action and continue, or **Deny** to
+   cancel and let the agent know.
+5. All read operations (list issues, list PRs, agile plan, etc.) execute
+   immediately without any approval step.
+
+### Using a local model (Ollama)
+
+```bash
+# Start Ollama with a compatible model
+ollama run qwen2.5:7b
+
+# Point the agent at Ollama
+OPENAI_BASE_URL=http://localhost:11434/v1 AGENT_MODEL=qwen2.5:7b git-review-agent
+```
+
+### Python SDK usage
+
+```python
+import asyncio
+from git_review.agent import AgentContext, run_agent_streaming
+from agents.stream_events import RawResponsesStreamEvent
+
+ctx = AgentContext(
+    owner="myorg",
+    repo="myrepo",
+    github_token="ghp_...",
+    openai_api_key="sk-...",
+    model="gpt-4o",
+)
+
+async def main():
+    result = run_agent_streaming(ctx, "List open issues")
+    async for event in result.stream_events():
+        if isinstance(event, RawResponsesStreamEvent):
+            if getattr(event.data, "type", "") == "response.output_text.delta":
+                print(event.data.delta, end="", flush=True)
+    print()
+
+    # Handle HITL interruptions
+    if result.interruptions:
+        state = result.to_state()
+        state.approve(result.interruptions[0])   # or state.reject(...)
+        result2 = run_agent_streaming(ctx, state)
+        async for event in result2.stream_events():
+            ...
+
+asyncio.run(main())
+```
+
+---
+
 ## VS Code Extension
 
 The git-review VS Code extension lets you run all commands from the Command
@@ -433,6 +538,10 @@ render_review_tables(summary_all)
 | `get_pull_requests(owner, repo, since, until, state="all")` | `list[PullRequest]` | Pull requests |
 | `get_open_issues(owner, repo)` | `list[Issue]` | All currently open issues (no time filter) |
 | `get_open_pull_requests(owner, repo)` | `list[PullRequest]` | All currently open PRs (no time filter) |
+| `get_issue(owner, repo, issue_number)` | `Issue` | Fetch a single issue by number |
+| `update_issue(owner, repo, number, *, title, body, state, labels, assignees, milestone)` | `dict` | Update an issue via PATCH |
+| `create_pull_request(owner, repo, title, body, head, base, draft)` | `dict` | Create a pull request |
+| `update_pull_request(owner, repo, number, *, title, body, state, draft, base)` | `dict` | Update a PR via PATCH |
 | `get_issue_blocked_by(owner, repo, issue_number)` | `list[dict]` | Issues that block the given issue (GitHub dependency API) |
 | `get_issue_blocking(owner, repo, issue_number)` | `list[dict]` | Issues the given issue is blocking (GitHub dependency API) |
 | `add_issue_blocked_by(owner, repo, issue_number, blocking_issue_id)` | `dict` | Record a blocked-by relationship via GitHub's native API |
@@ -502,9 +611,21 @@ git_review/
 ├── prompt_utils.py              # Jinja2 prompt template loader
 ├── config.py                    # AppSettings (pydantic-settings): env vars and .env support
 ├── app.py                       # Gradio web application (optional, requires [gradio] extra)
-└── cli.py                       # Click CLI entry-point
+├── cli.py                       # Click CLI entry-point
+├── agent_tools.py               # OpenAI Agents SDK tool functions (requires [agent] extra)
+├── agent.py                     # Agent builder + streaming run helper
+└── agent_app/                   # Reflex chat frontend (requires [agent] extra)
+    ├── agent_app.py             # Reflex app entry point + main() for git-review-agent script
+    ├── rxconfig.py              # Reflex configuration
+    ├── state.py                 # Reactive app state (chat history, HITL queue, settings)
+    └── components/
+        ├── chat.py              # Chat thread with streaming text + thinking indicator
+        ├── tool_call.py         # Collapsible tool-call / tool-result cards
+        ├── hitl_panel.py        # HITL approve / deny panel
+        └── settings.py          # Settings sidebar (repo, token, model, base_url)
 tests/
 ├── test_agile_planner.py
+├── test_agent_tools.py          # Unit tests for agent tool functions and HITL approval flags
 ├── test_github_client.py
 ├── test_llm_client.py
 ├── test_commit_message_generator.py

@@ -30,10 +30,15 @@ gradio = [
     "gradio>=4.0",
     "typer==0.12.3",
 ]
+agent = [
+    "openai-agents>=0.15",
+    "reflex>=0.9",
+]
 
 [project.scripts]
 git-review = "git_review.cli:main"
 git-review-app = "git_review.app:main"
+git-review-agent = "git_review.agent_app.agent_app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["git_review"]

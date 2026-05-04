@@ -738,6 +738,184 @@ class GitHubClient:
         response.raise_for_status()
         return response.json()
 
+    def get_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+    ) -> Issue:
+        """Fetch a single issue by number.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The issue number to fetch.
+        """
+        item = self._get(f"repos/{owner}/{repo}/issues/{issue_number}")
+        closed_at_str = item.get("closed_at")
+        milestone_info = item.get("milestone") or {}
+        return Issue(
+            number=item["number"],
+            title=item.get("title", ""),
+            state=item.get("state", ""),
+            author=(item.get("user") or {}).get("login", "unknown"),
+            created_at=isoparse(item.get("created_at", "1970-01-01T00:00:00Z")),
+            closed_at=isoparse(closed_at_str) if closed_at_str else None,
+            url=item.get("html_url", ""),
+            repo=f"{owner}/{repo}",
+            labels=[label.get("name", "") for label in item.get("labels", [])],
+            body=item.get("body") or "",
+            comments=item.get("comments", 0),
+            assignees=[
+                (a.get("login") or "") for a in item.get("assignees", []) if a
+            ],
+            milestone=milestone_info.get("title"),
+            github_id=item.get("id"),
+        )
+
+    def update_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        *,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        state: Optional[str] = None,
+        labels: Optional[list[str]] = None,
+        assignees: Optional[list[str]] = None,
+        milestone: Optional[int] = None,
+    ) -> dict:
+        """Update an existing issue via PATCH.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        issue_number:
+            The issue number to update.
+        title:
+            New title (omit to leave unchanged).
+        body:
+            New body text (omit to leave unchanged).
+        state:
+            ``"open"`` or ``"closed"`` (omit to leave unchanged).
+        labels:
+            Full replacement label list (omit to leave unchanged).
+        assignees:
+            Full replacement assignees list (omit to leave unchanged).
+        milestone:
+            Milestone number to attach, or ``0`` to clear (omit to leave unchanged).
+        """
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if state is not None:
+            payload["state"] = state
+        if labels is not None:
+            payload["labels"] = labels
+        if assignees is not None:
+            payload["assignees"] = assignees
+        if milestone is not None:
+            payload["milestone"] = milestone
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/issues/{issue_number}".lstrip("/"),
+        )
+        response = self._session.patch(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def create_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+        draft: bool = True,
+    ) -> dict:
+        """Create a pull request in *repo* and return the raw API response.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        title:
+            Pull request title.
+        body:
+            Pull request body (markdown).
+        head:
+            The name of the branch where your changes are implemented.
+        base:
+            The name of the branch you want the changes pulled into.
+        draft:
+            When ``True`` (default) creates a draft pull request.
+        """
+        payload: dict[str, Any] = {
+            "title": title,
+            "body": body,
+            "head": head,
+            "base": base,
+            "draft": draft,
+        }
+        return self._post(f"repos/{owner}/{repo}/pulls", json=payload)
+
+    def update_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        pull_number: int,
+        *,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        state: Optional[str] = None,
+        draft: Optional[bool] = None,
+        base: Optional[str] = None,
+    ) -> dict:
+        """Update a pull request via PATCH.
+
+        Parameters
+        ----------
+        owner, repo:
+            Repository coordinates.
+        pull_number:
+            The pull request number to update.
+        title:
+            New title (omit to leave unchanged).
+        body:
+            New body text (omit to leave unchanged).
+        state:
+            ``"open"`` or ``"closed"`` (omit to leave unchanged).
+        draft:
+            ``True`` to convert to draft, ``False`` to mark ready for review.
+        base:
+            New base branch name (omit to leave unchanged).
+        """
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if state is not None:
+            payload["state"] = state
+        if draft is not None:
+            payload["draft"] = draft
+        if base is not None:
+            payload["base"] = base
+        url = urljoin(
+            self._base_url,
+            f"repos/{owner}/{repo}/pulls/{pull_number}".lstrip("/"),
+        )
+        response = self._session.patch(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
     def update_issue_labels(
         self,
         owner: str,

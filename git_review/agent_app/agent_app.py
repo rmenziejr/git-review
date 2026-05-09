@@ -6,7 +6,7 @@ Launch
 
     git-review-agent
 
-or, from ``git_review/agent_app/``::
+or directly from ``git_review/agent_app/``::
 
     reflex run
 

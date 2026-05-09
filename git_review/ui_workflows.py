@@ -118,6 +118,10 @@ def _to_due_on_iso(due_on: str) -> Optional[str]:
     return due_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _validate_due_on(due_on: str) -> None:
+    _to_due_on_iso(due_on)
+
+
 def serialize_milestone_seeds(seeds: list[MilestoneSeed]) -> str:
     return "\n".join(
         " | ".join(
@@ -155,7 +159,7 @@ def parse_default_milestones_json(raw_json: str) -> list[MilestoneSeed]:
             raise ValueError(f"DEFAULT_MILESTONES_JSON item {index} is missing a title.")
         due_on = str(item.get("due_on", "")).strip()
         if due_on:
-            _to_due_on_iso(due_on)
+            _validate_due_on(due_on)
         seeds.append(
             MilestoneSeed(
                 title=title,
@@ -239,7 +243,7 @@ def parse_milestone_batch_text(batch_text: str) -> list[MilestoneSeed]:
         if not title:
             raise ValueError(f"Line {line_number}: milestone title is required.")
         if due_on:
-            _to_due_on_iso(due_on)
+            _validate_due_on(due_on)
         seeds.append(
             MilestoneSeed(
                 title=title,

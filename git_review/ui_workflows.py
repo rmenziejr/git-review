@@ -896,3 +896,104 @@ def apply_agile_labels(
         return f"❌  Error applying labels: {exc}"
 
     return f"✅  Updated labels on {len(responses)} issue(s)."
+
+
+def read_agile_project_board(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    status_field: str,
+    sprint_number: int,
+    result: Any,
+) -> tuple[str, str]:
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return "", f"❌  {exc}"
+    if int(project_number or 0) <= 0:
+        return "", "❌  Project number must be a positive integer."
+
+    issue_numbers: list[int] = []
+    if result is not None:
+        if int(sprint_number or 0) > 0:
+            sprint = next((s for s in result.sprints if s.sprint_number == int(sprint_number)), None)
+            if sprint is None:
+                return "", f"❌  Sprint {int(sprint_number)} was not found in the current plan."
+            issue_numbers = [int(i) for i in sprint.issues]
+        else:
+            all_numbers: set[int] = set()
+            for sprint in result.sprints:
+                all_numbers.update(int(i) for i in sprint.issues)
+            issue_numbers = sorted(all_numbers)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        board = gh.read_project_status_board(
+            owner=owner,
+            project_number=int(project_number),
+            repo=f"{owner}/{repo_name}",
+            issue_numbers=issue_numbers or None,
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return "", f"❌  Error reading project board: {exc}"
+
+    items = board.get("items") or []
+    if not items:
+        scope = "selected sprint issues" if issue_numbers else "the repository"
+        return "_No project items found for the selected scope._", (
+            f"ℹ️  Project #{int(project_number)} returned no items for {scope}."
+        )
+
+    lines = [
+        "| Issue/PR | Type | Status | Title |",
+        "|----------|------|--------|-------|",
+    ]
+    for item in items:
+        lines.append(
+            f"| #{item.get('number')} | {item.get('type', '')} | "
+            f"{item.get('status', '') or '—'} | {item.get('title', '')} |"
+        )
+    markdown = "\n".join(lines)
+    status = (
+        f"✅  Loaded {len(items)} item(s) from project #{int(project_number)} "
+        f"({board.get('project_title', '')})."
+    )
+    return markdown, status
+
+
+def update_agile_project_status(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    issue_number: int,
+    status_value: str,
+    status_field: str,
+) -> str:
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return f"❌  {exc}"
+    if int(project_number or 0) <= 0:
+        return "❌  Project number must be a positive integer."
+    if int(issue_number or 0) <= 0:
+        return "❌  Issue/PR number must be a positive integer."
+    if not (status_value or "").strip():
+        return "❌  Status value is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        updated = gh.update_project_item_status(
+            owner=owner,
+            project_number=int(project_number),
+            issue_number=int(issue_number),
+            status=status_value.strip(),
+            repo=f"{owner}/{repo_name}",
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return f"❌  Error updating project status: {exc}"
+    return (
+        f"✅  Updated #{updated.get('issue_number')} in project #{updated.get('project_number')} "
+        f"to '{updated.get('status')}'."
+    )

@@ -808,6 +808,105 @@ def _apply_agile_labels(
     return f"✅  Updated labels on {len(responses)} issue(s)."
 
 
+def _read_agile_project_board(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    status_field: str,
+    sprint_number: int,
+    result: Any,
+) -> tuple[str, str]:
+    if int(project_number or 0) <= 0:
+        return "", "❌  Project number must be a positive integer."
+    if not repo or "/" not in repo:
+        return "", "❌  Please enter the repository in 'owner/repo' format."
+    owner, repo_name = repo.strip().split("/", 1)
+
+    issue_numbers: list[int] = []
+    if result is not None:
+        if int(sprint_number or 0) > 0:
+            sprint = next((s for s in result.sprints if s.sprint_number == int(sprint_number)), None)
+            if sprint is None:
+                return "", f"❌  Sprint {int(sprint_number)} was not found in the current plan."
+            issue_numbers = [int(i) for i in sprint.issues]
+        else:
+            all_numbers: set[int] = set()
+            for sprint in result.sprints:
+                all_numbers.update(int(i) for i in sprint.issues)
+            issue_numbers = sorted(all_numbers)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        board = gh.read_project_status_board(
+            owner=owner,
+            project_number=int(project_number),
+            repo=f"{owner}/{repo_name}",
+            issue_numbers=issue_numbers or None,
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return "", f"❌  Error reading project board: {exc}"
+
+    items = board.get("items") or []
+    if not items:
+        scope = "selected sprint issues" if issue_numbers else "the repository"
+        return "_No project items found for the selected scope._", (
+            f"ℹ️  Project #{int(project_number)} returned no items for {scope}."
+        )
+
+    lines = [
+        "| Issue/PR | Type | Status | Title |",
+        "|----------|------|--------|-------|",
+    ]
+    for item in items:
+        lines.append(
+            f"| #{item.get('number')} | {item.get('type', '')} | "
+            f"{item.get('status', '') or '—'} | {item.get('title', '')} |"
+        )
+    markdown = "\n".join(lines)
+    status = (
+        f"✅  Loaded {len(items)} item(s) from project #{int(project_number)} "
+        f"({board.get('project_title', '')})."
+    )
+    return markdown, status
+
+
+def _update_agile_project_status(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    issue_number: int,
+    status_value: str,
+    status_field: str,
+) -> str:
+    if int(project_number or 0) <= 0:
+        return "❌  Project number must be a positive integer."
+    if int(issue_number or 0) <= 0:
+        return "❌  Issue/PR number must be a positive integer."
+    if not (status_value or "").strip():
+        return "❌  Status value is required."
+    if not repo or "/" not in repo:
+        return "❌  Please enter the repository in 'owner/repo' format."
+    owner, repo_name = repo.strip().split("/", 1)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        updated = gh.update_project_item_status(
+            owner=owner,
+            project_number=int(project_number),
+            issue_number=int(issue_number),
+            status=status_value.strip(),
+            repo=f"{owner}/{repo_name}",
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return f"❌  Error updating project status: {exc}"
+    return (
+        f"✅  Updated #{updated.get('issue_number')} in project #{updated.get('project_number')} "
+        f"to '{updated.get('status')}'."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Build the Gradio UI
 # ---------------------------------------------------------------------------
@@ -1226,6 +1325,43 @@ def build_app() -> gr.Blocks:
                         "Apply Priority Labels", variant="secondary"
                     )
                 agile_apply_status = gr.Textbox(label="Apply Status", interactive=False)
+                gr.Markdown("---")
+                gr.Markdown("### Project Status Board")
+                gr.Markdown(
+                    "Read project board statuses for sprint issues and update item status during the sprint."
+                )
+                with gr.Row():
+                    agile_project_number = gr.Number(
+                        label="Project #",
+                        value=1,
+                        minimum=1,
+                        precision=0,
+                    )
+                    agile_project_status_field = gr.Textbox(
+                        label="Status field name",
+                        value="Status",
+                    )
+                    agile_project_sprint = gr.Number(
+                        label="Sprint # filter (optional, 0 = all planned)",
+                        value=0,
+                        minimum=0,
+                        precision=0,
+                    )
+                with gr.Row():
+                    agile_project_read_btn = gr.Button("Read Project Board", variant="secondary")
+                    agile_project_issue_number = gr.Number(
+                        label="Issue/PR #",
+                        value=0,
+                        minimum=0,
+                        precision=0,
+                    )
+                    agile_project_status_value = gr.Textbox(
+                        label="New status",
+                        placeholder="In Progress",
+                    )
+                    agile_project_update_btn = gr.Button("Update Status", variant="secondary")
+                agile_project_board_status = gr.Textbox(label="Project Board Status", interactive=False)
+                agile_project_board_output = gr.Markdown(label="Project Board")
 
                 # Wire plan button
                 agile_plan_btn.click(
@@ -1259,6 +1395,32 @@ def build_app() -> gr.Blocks:
                     fn=_apply_agile_labels,
                     inputs=[github_token, agile_repo, agile_all_repos, _agile_result_state],
                     outputs=agile_apply_status,
+                )
+
+                agile_project_read_btn.click(
+                    fn=_read_agile_project_board,
+                    inputs=[
+                        github_token,
+                        agile_repo,
+                        agile_project_number,
+                        agile_project_status_field,
+                        agile_project_sprint,
+                        _agile_result_state,
+                    ],
+                    outputs=[agile_project_board_output, agile_project_board_status],
+                )
+
+                agile_project_update_btn.click(
+                    fn=_update_agile_project_status,
+                    inputs=[
+                        github_token,
+                        agile_repo,
+                        agile_project_number,
+                        agile_project_issue_number,
+                        agile_project_status_value,
+                        agile_project_status_field,
+                    ],
+                    outputs=agile_project_board_status,
                 )
 
     return app

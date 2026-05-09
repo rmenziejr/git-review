@@ -31,8 +31,10 @@ from git_review.agent_tools import (
     list_repos,
     preview_servicenow_sync,
     push_issue_draft,
+    read_project_status_board,
     ready_pr_for_review,
     search_issues,
+    update_project_status,
     update_issue,
     update_pull_request,
 )
@@ -160,6 +162,7 @@ WRITE_TOOLS = [
     create_draft_pr,
     update_pull_request,
     ready_pr_for_review,
+    update_project_status,
 ]
 
 READ_TOOLS = [
@@ -169,6 +172,7 @@ READ_TOOLS = [
     list_pull_requests,
     create_issue_draft,
     agile_plan,
+    read_project_status_board,
 ]
 
 
@@ -198,11 +202,13 @@ def test_all_tools_list_complete() -> None:
         "list_pull_requests",
         "create_issue_draft",
         "agile_plan",
+        "read_project_status_board",
         "push_issue_draft",
         "update_issue",
         "create_draft_pr",
         "update_pull_request",
         "ready_pr_for_review",
+        "update_project_status",
     }
     assert all_names == expected
 
@@ -257,6 +263,29 @@ async def test_search_issues_returns_json() -> None:
     assert issues[0]["number"] == 1
     assert issues[0]["title"] == "Bug: crash"
     assert issues[1]["labels"] == ["bug"]
+
+
+@pytest.mark.asyncio
+async def test_read_project_status_board_returns_json() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = (
+        '{"owner": "myorg", "project_number": 7, "repo": "myorg/myrepo", '
+        '"status_field": "Status", "issue_numbers_csv": "1,2"}'
+    )
+    tc = _make_tool_ctx(agent_ctx, "read_project_status_board", args)
+    mock_gh = MagicMock()
+    mock_gh.read_project_status_board.return_value = {
+        "project_number": 7,
+        "items": [{"number": 1, "status": "Todo"}],
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await read_project_status_board.on_invoke_tool(tc, args)
+
+    payload = json.loads(result)
+    assert payload["project_number"] == 7
+    assert payload["items"][0]["number"] == 1
+    mock_gh.read_project_status_board.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +566,41 @@ async def test_ready_pr_for_review_sets_draft_false() -> None:
     assert data["number"] == 15
     mock_gh.update_pull_request.assert_called_once_with(
         "myorg", "myrepo", 15, draft=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_project_status_calls_client() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = json.dumps({
+        "owner": "myorg",
+        "project_number": 7,
+        "repo": "myorg/myrepo",
+        "issue_number": 15,
+        "status": "In Progress",
+        "status_field": "Status",
+    })
+    tc = _make_tool_ctx(agent_ctx, "update_project_status", args)
+    mock_gh = MagicMock()
+    mock_gh.update_project_item_status.return_value = {
+        "project_number": 7,
+        "issue_number": 15,
+        "status": "In Progress",
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await update_project_status.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["project_number"] == 7
+    assert data["issue_number"] == 15
+    mock_gh.update_project_item_status.assert_called_once_with(
+        owner="myorg",
+        project_number=7,
+        issue_number=15,
+        status="In Progress",
+        repo="myorg/myrepo",
+        status_field_name="Status",
     )
 
 

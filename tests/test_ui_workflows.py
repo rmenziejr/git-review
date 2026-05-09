@@ -13,8 +13,10 @@ from git_review.ui_workflows import (
     fetch_requirements_from_repo,
     load_default_milestones_text,
     parse_requirements,
+    read_agile_project_board,
     run_agile_planner,
     submit_issues,
+    update_agile_project_status,
 )
 
 _DT = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -212,3 +214,51 @@ def test_agent_app_imports_with_multi_page_shell() -> None:
     from git_review.agent_app import agent_app
 
     assert agent_app.app is not None
+
+
+def test_read_agile_project_board_formats_markdown() -> None:
+    result = AgilePlanResult(
+        owner="acme",
+        repo="app",
+        issues=[_issue(1, "A"), _issue(2, "B")],
+        sprints=[SprintRecommendation(sprint_number=1, issues=[1, 2])],
+    )
+    mock_gh = MagicMock()
+    mock_gh.read_project_status_board.return_value = {
+        "project_title": "Sprint Board",
+        "items": [
+            {"number": 1, "type": "Issue", "status": "In Progress", "title": "A"},
+            {"number": 2, "type": "Issue", "status": "Todo", "title": "B"},
+        ],
+    }
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        markdown, status = read_agile_project_board(
+            "ghp_test",
+            "acme/app",
+            3,
+            "Status",
+            1,
+            result,
+        )
+    assert "| #1 | Issue | In Progress | A |" in markdown
+    assert "Loaded 2 item(s) from project #3" in status
+    mock_gh.read_project_status_board.assert_called_once()
+
+
+def test_update_agile_project_status_returns_success() -> None:
+    mock_gh = MagicMock()
+    mock_gh.update_project_item_status.return_value = {
+        "project_number": 3,
+        "issue_number": 12,
+        "status": "Done",
+    }
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        status = update_agile_project_status(
+            "ghp_test",
+            "acme/app",
+            3,
+            12,
+            "Done",
+            "Status",
+        )
+    assert "Updated #12 in project #3 to 'Done'" in status

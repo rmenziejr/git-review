@@ -829,7 +829,7 @@ def _servicenow_page() -> rx.Component:
 def _agile_page() -> rx.Component:
     return _page_shell(
         "Agile planner",
-        "Generate dependency-aware sprint plans and apply the approved graph or label updates.",
+        "Generate dependency-aware sprint plans, read project status boards, and apply approved updates.",
         _section_card(
             "Planning inputs",
             "Point the planner at a repository or owner and tune the sprint configuration.",
@@ -877,8 +877,74 @@ def _agile_page() -> rx.Component:
             _status_block("Planning status", AppState.agile_status),
             _status_block("Apply status", AppState.agile_apply_status),
         ),
+        _section_card(
+            "Project status board",
+            "Read project statuses for sprint issues and update item status during the sprint.",
+            rx.hstack(
+                _labeled_field(
+                    "Project number",
+                    rx.input(
+                        value=AppState.agile_project_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_number", value),
+                        placeholder="12",
+                        width="100%",
+                    ),
+                ),
+                _labeled_field(
+                    "Status field",
+                    rx.input(
+                        value=AppState.agile_project_status_field,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_field", value),
+                        placeholder="Status",
+                        width="100%",
+                    ),
+                ),
+                _labeled_field(
+                    "Sprint # filter (optional)",
+                    rx.input(
+                        value=AppState.agile_project_sprint_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_sprint_number", value),
+                        placeholder="1",
+                        width="100%",
+                    ),
+                ),
+                width="100%",
+            ),
+            rx.hstack(
+                rx.button("Read board", on_click=AppState.read_agile_project_board_workflow, color_scheme="indigo"),
+                _labeled_field(
+                    "Issue/PR #",
+                    rx.input(
+                        value=AppState.agile_project_issue_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_issue_number", value),
+                        placeholder="123",
+                        width="160px",
+                    ),
+                ),
+                _labeled_field(
+                    "New status",
+                    rx.input(
+                        value=AppState.agile_project_status_value,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_value", value),
+                        placeholder="In Progress",
+                        width="220px",
+                    ),
+                ),
+                rx.button(
+                    "Update status",
+                    on_click=AppState.update_agile_project_status_workflow,
+                    color_scheme="indigo",
+                    variant="soft",
+                ),
+                spacing="3",
+                align_items="end",
+                width="100%",
+            ),
+            _status_block("Project board status", AppState.agile_project_board_status),
+        ),
         _markdown_block("Dependency graph", AppState.agile_dependencies_markdown),
         _markdown_block("Sprint plan", AppState.agile_plan_markdown),
+        _markdown_block("Project board", AppState.agile_project_board_markdown),
     )
 
 

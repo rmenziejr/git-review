@@ -42,7 +42,7 @@ directly inside your editor.
 | **Issue generator** | Parse a markdown requirements file and create GitHub issues via LLM |
 | **Milestone management** | Create and list GitHub milestones from the CLI or web app |
 | **ServiceNow sync (GitHub source of truth)** | Incrementally sync GitHub milestones/issues into ServiceNow with cursor tracking, dry-run previews, and conflict reporting |
-| **Agile planner** | Fetch all open issues/PRs, detect blocking dependencies, and generate a prioritised sprint plan via LLM |
+| **Agile planner** | Fetch open issues/PRs, detect blockers, generate sprint plans, read Project status boards, and update project item status during a sprint |
 | **Native dependency API** | Write inferred blocking/blocked-by relationships back to GitHub using the native issue-dependencies REST API |
 | **Custom prompts** | Override the LLM system prompt with a Jinja2 template via `--prompt-file` |
 | **Thinking mode** | Extended reasoning for commit-message generation with `--think` |
@@ -373,7 +373,7 @@ browser to access the UI.
 | **🔄 ServiceNow Sync** | Preview/apply incremental GitHub → ServiceNow milestone/issue sync with cursor tracking |
 | **📄 Parse Requirements** | Upload or fetch a markdown requirements file and generate issue drafts via LLM |
 | **🚀 Submit Issues** | Review, edit, and selectively push the generated issue drafts to GitHub |
-| **🗂️ Agile Planner** | Fetch open issues/PRs, show the dependency graph, generate a sprint plan, and optionally write blocking relationships back to GitHub |
+| **🗂️ Agile Planner** | Fetch open issues/PRs, show the dependency graph, generate a sprint plan, write inferred blockers, read a Project board, and update item status |
 
 ### Web app configuration
 
@@ -433,7 +433,7 @@ the app at `http://localhost:3000`.
 | **Milestones** | Queue milestones, load defaults from env, create them in bulk, and review existing roadmap milestones |
 | **Requirements** | Fetch or paste requirements, seed milestones from the shared queue/defaults, generate editable drafts, and submit issues in one flow |
 | **ServiceNow** | Preview or apply GitHub → ServiceNow sync with the shared settings |
-| **Agile** | Generate sprint plans, inspect dependencies, and apply approved updates back to GitHub |
+| **Agile** | Generate sprint plans, inspect dependencies, read Projects board status, and apply approved relationship/label/status updates back to GitHub |
 
 ### Configuring the agent
 

@@ -120,6 +120,16 @@ def _parse_back_sync_fields(raw_csv: str) -> tuple[str, ...]:
     return tuple(sorted(requested & allowed))
 
 
+def _parse_int_csv(raw_csv: str) -> list[int]:
+    values: list[int] = []
+    for token in (raw_csv or "").split(","):
+        piece = token.strip()
+        if not piece:
+            continue
+        values.append(int(piece))
+    return values
+
+
 def _sync_servicenow_for_context(
     ctx: AgentContext,
     *,
@@ -383,6 +393,68 @@ async def agile_plan(
     )
 
 
+@function_tool(needs_approval=False)
+async def read_project_status_board(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    project_number: int,
+    repo: str,
+    status_field: str = "Status",
+    issue_numbers_csv: str = "",
+) -> str:
+    """Read a GitHub Projects v2 status board, optionally filtered to specific issue numbers.
+
+    Args:
+        owner: Project owner (org or user).
+        project_number: Projects v2 project number.
+        repo: Optional repository filter in owner/repo form.
+        status_field: Single-select field name (default: Status).
+        issue_numbers_csv: Optional CSV of issue/PR numbers to include.
+    """
+    gh = _make_gh(ctx.context)
+    issue_numbers = _parse_int_csv(issue_numbers_csv) if issue_numbers_csv.strip() else None
+    board = gh.read_project_status_board(
+        owner=owner,
+        project_number=project_number,
+        repo=repo.strip() or None,
+        issue_numbers=issue_numbers,
+        status_field_name=(status_field or "Status").strip() or "Status",
+    )
+    return json.dumps(board)
+
+
+@function_tool(needs_approval=True)
+async def update_project_status(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    project_number: int,
+    repo: str,
+    issue_number: int,
+    status: str,
+    status_field: str = "Status",
+) -> str:
+    """Update one GitHub Projects v2 item status value after human approval.
+
+    Args:
+        owner: Project owner (org or user).
+        project_number: Projects v2 project number.
+        repo: Repository filter in owner/repo form.
+        issue_number: Issue/PR number to update.
+        status: Target status option name.
+        status_field: Single-select field name (default: Status).
+    """
+    gh = _make_gh(ctx.context)
+    updated = gh.update_project_item_status(
+        owner=owner,
+        project_number=project_number,
+        issue_number=issue_number,
+        status=status,
+        repo=repo.strip() or None,
+        status_field_name=(status_field or "Status").strip() or "Status",
+    )
+    return json.dumps(updated)
+
+
 # ---------------------------------------------------------------------------
 # ServiceNow tools (enabled via settings/context)
 # ---------------------------------------------------------------------------
@@ -603,11 +675,13 @@ ALL_TOOLS = [
     list_pull_requests,
     create_issue_draft,
     agile_plan,
+    read_project_status_board,
     push_issue_draft,
     update_issue,
     create_draft_pr,
     update_pull_request,
     ready_pr_for_review,
+    update_project_status,
 ]
 
 SERVICENOW_TOOLS = [

@@ -52,6 +52,7 @@ class AppSettings(BaseSettings):
     ``servicenow_milestone_table`` ``SERVICENOW_MILESTONE_TABLE``
     ``servicenow_issue_table`` ``SERVICENOW_ISSUE_TABLE``
     ``servicenow_cursor_path`` ``SERVICENOW_CURSOR_PATH``
+    ``default_milestones_json`` ``DEFAULT_MILESTONES_JSON``
     ``gradio_server_name``  ``GRADIO_SERVER_NAME``
     ``gradio_server_port``  ``GRADIO_SERVER_PORT``
     ======================  =======================
@@ -122,6 +123,13 @@ class AppSettings(BaseSettings):
     servicenow_cursor_path: str = Field(
         default=".git-review-sync-cursor.json",
         description="File path for incremental GitHub→ServiceNow cursor storage.",
+    )
+    default_milestones_json: str = Field(
+        default="",
+        description=(
+            "Optional JSON array of default milestone definitions for the web UIs. "
+            "Each item should include title and may include due_on, state, and description."
+        ),
     )
     gradio_server_name: str = Field(
         default="0.0.0.0",

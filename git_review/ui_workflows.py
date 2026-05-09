@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -82,6 +84,223 @@ def _table_to_drafts(rows: list[list[Any]]) -> list[IssueDraft]:
             )
         )
     return drafts
+
+
+@dataclass
+class MilestoneSeed:
+    """A milestone definition that can be queued before GitHub creation."""
+
+    title: str
+    description: str = ""
+    due_on: str = ""
+    state: str = "open"
+
+
+def _normalize_milestone_state(state: str) -> str:
+    value = (state or "").strip().lower() or "open"
+    if value not in {"open", "closed"}:
+        raise ValueError(f"Invalid milestone state '{state}'. Use 'open' or 'closed'.")
+    return value
+
+
+def _to_due_on_iso(due_on: str) -> Optional[str]:
+    if not (due_on or "").strip():
+        return None
+    try:
+        due_dt = datetime.strptime(due_on.strip(), "%Y-%m-%d").replace(
+            hour=0,
+            minute=0,
+            second=0,
+            tzinfo=timezone.utc,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Invalid due date '{due_on}'. Use YYYY-MM-DD format.") from exc
+    return due_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def serialize_milestone_seeds(seeds: list[MilestoneSeed]) -> str:
+    return "\n".join(
+        " | ".join(
+            [
+                seed.title.strip(),
+                seed.due_on.strip(),
+                seed.state.strip() or "open",
+                " ".join(seed.description.splitlines()).strip(),
+            ]
+        ).rstrip()
+        for seed in seeds
+    )
+
+
+def parse_default_milestones_json(raw_json: str) -> list[MilestoneSeed]:
+    payload = (raw_json or "").strip()
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("DEFAULT_MILESTONES_JSON must contain valid JSON.") from exc
+
+    if not isinstance(data, list):
+        raise ValueError("DEFAULT_MILESTONES_JSON must be a JSON array.")
+
+    seeds: list[MilestoneSeed] = []
+    for index, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"DEFAULT_MILESTONES_JSON item {index} must be an object with milestone fields."
+            )
+        title = str(item.get("title", "")).strip()
+        if not title:
+            raise ValueError(f"DEFAULT_MILESTONES_JSON item {index} is missing a title.")
+        due_on = str(item.get("due_on", "")).strip()
+        if due_on:
+            _to_due_on_iso(due_on)
+        seeds.append(
+            MilestoneSeed(
+                title=title,
+                description=str(item.get("description", "")).strip(),
+                due_on=due_on,
+                state=_normalize_milestone_state(str(item.get("state", "open"))),
+            )
+        )
+    return seeds
+
+
+def load_default_milestones_text(raw_json: str) -> tuple[str, str]:
+    seeds = parse_default_milestones_json(raw_json)
+    if not seeds:
+        return "", "ℹ️  No default milestones configured in DEFAULT_MILESTONES_JSON."
+    return (
+        serialize_milestone_seeds(seeds),
+        f"✅  Loaded {len(seeds)} default milestone(s) from DEFAULT_MILESTONES_JSON.",
+    )
+
+
+def append_milestone_to_batch(
+    batch_text: str,
+    title: str,
+    description: str,
+    due_on: str,
+    state: str,
+) -> tuple[str, str]:
+    title_value = (title or "").strip()
+    if not title_value:
+        return batch_text, "❌  Milestone title is required before adding it to the queue."
+
+    due_on_value = (due_on or "").strip()
+    try:
+        if due_on_value:
+            _to_due_on_iso(due_on_value)
+        seed = MilestoneSeed(
+            title=title_value,
+            description=(description or "").strip(),
+            due_on=due_on_value,
+            state=_normalize_milestone_state(state),
+        )
+    except ValueError as exc:
+        return batch_text, f"❌  {exc}"
+
+    line = serialize_milestone_seeds([seed])
+    next_batch = f"{batch_text.rstrip()}\n{line}".strip() if batch_text.strip() else line
+    return next_batch, f"✅  Added '{title_value}' to the milestone queue."
+
+
+def parse_milestone_batch_text(batch_text: str) -> list[MilestoneSeed]:
+    seeds: list[MilestoneSeed] = []
+    for line_number, raw_line in enumerate((batch_text or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        parts = [part.strip() for part in line.split("|")]
+        title = ""
+        description = ""
+        due_on = ""
+        state = "open"
+
+        if len(parts) == 1:
+            title = parts[0]
+        elif len(parts) == 2:
+            title, description = parts
+        elif len(parts) == 3:
+            title, due_on, description = parts
+        else:
+            title = parts[0]
+            due_on = parts[1]
+            state = parts[2] or "open"
+            description = " | ".join(parts[3:]).strip()
+
+        title = title.strip()
+        if not title:
+            raise ValueError(f"Line {line_number}: milestone title is required.")
+        if due_on:
+            _to_due_on_iso(due_on)
+        seeds.append(
+            MilestoneSeed(
+                title=title,
+                description=description.strip(),
+                due_on=due_on.strip(),
+                state=_normalize_milestone_state(state),
+            )
+        )
+
+    return seeds
+
+
+def create_milestones_batch(
+    github_token: str,
+    repo: str,
+    batch_text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not repo or "/" not in repo:
+        return "❌  Please enter the repository in 'owner/repo' format.", []
+
+    try:
+        seeds = parse_milestone_batch_text(batch_text)
+    except ValueError as exc:
+        return f"❌  {exc}", []
+
+    if not seeds:
+        return "❌  Add at least one milestone to the queue before creating them.", []
+
+    owner, repo_name = repo.strip().split("/", 1)
+    gh = GitHubClient(token=github_token or None)
+    created: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for seed in seeds:
+        try:
+            result = gh.create_milestone(
+                owner=owner,
+                repo=repo_name,
+                title=seed.title,
+                description=seed.description,
+                due_on=_to_due_on_iso(seed.due_on),
+                state=seed.state,
+            )
+            created.append(result)
+        except Exception as exc:
+            errors.append(f"- {seed.title}: {exc}")
+
+    if created and not errors:
+        status_prefix = "✅"
+    elif created:
+        status_prefix = "⚠️"
+    else:
+        status_prefix = "❌"
+
+    lines = [
+        f"{status_prefix}  Created {len(created)} of {len(seeds)} milestone(s) for {owner}/{repo_name}."
+    ]
+    for result in created:
+        lines.append(
+            f"- #{result.get('number', '?')} {result.get('title', '')} {result.get('html_url', '')}".rstrip()
+        )
+    if errors:
+        lines.extend(["", "Errors:"])
+        lines.extend(errors)
+    return "\n".join(lines), created
 
 
 def summarize_activity(
@@ -227,15 +446,11 @@ def create_milestone(
         return "❌  Milestone title is required."
 
     owner, repo_name = repo.strip().split("/", 1)
-    due_on_iso: Optional[str] = None
-    if due_on.strip():
-        try:
-            due_dt = datetime.strptime(due_on.strip(), "%Y-%m-%d").replace(
-                hour=0, minute=0, second=0, tzinfo=timezone.utc
-            )
-            due_on_iso = due_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        except ValueError:
-            return f"❌  Invalid due date '{due_on}'. Use YYYY-MM-DD format."
+    try:
+        due_on_iso = _to_due_on_iso(due_on)
+        state_value = _normalize_milestone_state(state)
+    except ValueError as exc:
+        return f"❌  {exc}"
 
     gh = GitHubClient(token=github_token or None)
     try:
@@ -245,7 +460,7 @@ def create_milestone(
             title=title.strip(),
             description=description.strip(),
             due_on=due_on_iso,
-            state=state,
+            state=state_value,
         )
     except Exception as exc:
         return f"❌  Error creating milestone: {exc}"

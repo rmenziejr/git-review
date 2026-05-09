@@ -17,6 +17,7 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SERVICENOW_ENABLED", raising=False)
     monkeypatch.delenv("SERVICENOW_URL", raising=False)
     monkeypatch.delenv("SERVICENOW_TOKEN", raising=False)
+    monkeypatch.delenv("DEFAULT_MILESTONES_JSON", raising=False)
 
     settings = AppSettings()
 
@@ -27,6 +28,7 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.servicenow_enabled is False
     assert settings.servicenow_url == ""
     assert settings.servicenow_token == ""
+    assert settings.default_milestones_json == ""
 
 
 def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,6 +39,10 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SERVICENOW_ENABLED", "true")
     monkeypatch.setenv("SERVICENOW_URL", "https://example.service-now.com")
     monkeypatch.setenv("SERVICENOW_TOKEN", "sn-token")
+    monkeypatch.setenv(
+        "DEFAULT_MILESTONES_JSON",
+        '[{"title":"Backlog","description":"Shared roadmap"}]',
+    )
 
     settings = AppSettings()
 
@@ -47,6 +53,7 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.servicenow_enabled is True
     assert settings.servicenow_url == "https://example.service-now.com"
     assert settings.servicenow_token == "sn-token"
+    assert settings.default_milestones_json == '[{"title":"Backlog","description":"Shared roadmap"}]'
 
 
 def test_explicit_construction_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:

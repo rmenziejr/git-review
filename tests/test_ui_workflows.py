@@ -8,7 +8,10 @@ from unittest.mock import MagicMock, patch
 from git_review.issue_factory import IssueDraft
 from git_review.models import AgilePlanResult, Issue, IssueDependency, PullRequest, SprintRecommendation
 from git_review.ui_workflows import (
+    append_milestone_to_batch,
+    create_milestones_batch,
     fetch_requirements_from_repo,
+    load_default_milestones_text,
     parse_requirements,
     run_agile_planner,
     submit_issues,
@@ -67,6 +70,41 @@ def test_parse_requirements_returns_editable_rows() -> None:
 
     assert rows == [[1, "Add dashboard", "Build the dashboard", "enhancement", "alice", "3"]]
     assert "Extracted 1 issue draft(s)" in status
+
+
+def test_load_default_milestones_text_formats_queue() -> None:
+    queue_text, status = load_default_milestones_text(
+        '[{"title":"Backlog","description":"Shared roadmap","due_on":"2026-06-01","state":"open"}]'
+    )
+
+    assert queue_text == "Backlog | 2026-06-01 | open | Shared roadmap"
+    assert "Loaded 1 default milestone(s)" in status
+
+
+def test_append_milestone_to_batch_adds_line() -> None:
+    queue_text, status = append_milestone_to_batch("", "Backlog", "Shared roadmap", "2026-06-01", "open")
+
+    assert queue_text == "Backlog | 2026-06-01 | open | Shared roadmap"
+    assert "Added 'Backlog'" in status
+
+
+def test_create_milestones_batch_creates_multiple_entries() -> None:
+    mock_gh = MagicMock()
+    mock_gh.create_milestone.side_effect = [
+        {"number": 1, "title": "Backlog", "html_url": "https://github.com/acme/app/milestone/1"},
+        {"number": 2, "title": "MVP", "html_url": "https://github.com/acme/app/milestone/2"},
+    ]
+
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        status, created = create_milestones_batch(
+            "ghp_test",
+            "acme/app",
+            "Backlog | 2026-06-01 | open | Shared roadmap\nMVP | 2026-07-01 | open | First release",
+        )
+
+    assert len(created) == 2
+    assert "Created 2 of 2 milestone(s) for acme/app." in status
+    assert mock_gh.create_milestone.call_count == 2
 
 
 def test_submit_issues_pushes_rows_to_github() -> None:

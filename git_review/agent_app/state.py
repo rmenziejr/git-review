@@ -44,9 +44,12 @@ from ..config import AppSettings
 from ..ui_workflows import (
     apply_agile_labels,
     apply_agile_relationships,
+    append_milestone_to_batch,
     create_milestone,
+    create_milestones_batch,
     fetch_requirements_from_repo,
     list_milestones,
+    load_default_milestones_text,
     parse_requirements,
     run_agile_planner,
     run_agile_planner_state,
@@ -158,6 +161,8 @@ class AppState(rx.State):
     milestone_due_on: str = ""
     milestone_state: str = "open"
     milestone_create_result: str = ""
+    milestone_queue_text: str = ""
+    milestone_defaults_status: str = ""
     milestone_list_repo: str = ""
     milestone_list_state: str = "open"
     milestone_list_output: str = ""
@@ -174,6 +179,7 @@ class AppState(rx.State):
     requirements_use_milestones: bool = False
     requirements_milestones_repo: str = ""
     requirements_status: str = ""
+    requirements_milestone_status: str = ""
     requirement_drafts: list[RequirementDraft] = []
     submit_repo: str = ""
     submit_milestone_override: str = ""
@@ -222,6 +228,13 @@ class AppState(rx.State):
             self.servicenow_issue_table = settings.servicenow_issue_table
         if settings.servicenow_cursor_path:
             self.servicenow_cursor_path = settings.servicenow_cursor_path
+        if settings.default_milestones_json and not self.milestone_queue_text.strip():
+            try:
+                queue_text, status = load_default_milestones_text(settings.default_milestones_json)
+                self.milestone_queue_text = queue_text
+                self.milestone_defaults_status = status
+            except ValueError as exc:
+                self.milestone_defaults_status = f"❌  {exc}"
         repo_value = self._settings_repo_value()
         if repo_value:
             for field_name in (
@@ -331,6 +344,41 @@ class AppState(rx.State):
         self.requirements_status = ""
         self.submit_status = ""
 
+    def load_default_milestones(self) -> None:
+        settings = AppSettings()
+        try:
+            queue_text, status = load_default_milestones_text(settings.default_milestones_json)
+        except ValueError as exc:
+            self.milestone_defaults_status = f"❌  {exc}"
+            return
+        self.milestone_queue_text = queue_text
+        self.milestone_defaults_status = status
+
+    def queue_current_milestone(self) -> None:
+        next_queue, status = append_milestone_to_batch(
+            self.milestone_queue_text,
+            self.milestone_title,
+            self.milestone_description,
+            self.milestone_due_on,
+            self.milestone_state,
+        )
+        self.milestone_queue_text = next_queue
+        self.milestone_create_result = status
+        if status.startswith("✅"):
+            self.milestone_title = ""
+            self.milestone_description = ""
+            self.milestone_due_on = ""
+
+    def clear_milestone_queue(self) -> None:
+        self.milestone_queue_text = ""
+        self.milestone_create_result = ""
+
+    def use_milestones_for_requirements(self) -> None:
+        repo_value = (self.requirements_milestones_repo or self.requirements_repo).strip()
+        if repo_value:
+            self.requirements_milestones_repo = repo_value
+            self.requirements_use_milestones = True
+
     def _draft_rows(self) -> list[list[str]]:
         return [
             [
@@ -396,6 +444,16 @@ class AppState(rx.State):
         )
         yield
 
+    async def create_queued_milestones_workflow(self) -> None:
+        self.milestone_create_result = "Working…"
+        yield
+        self.milestone_create_result, _ = create_milestones_batch(
+            self.github_token,
+            self.milestone_repo,
+            self.milestone_queue_text,
+        )
+        yield
+
     async def list_milestones_workflow(self) -> None:
         self.milestone_list_output = "Working…"
         yield
@@ -458,6 +516,22 @@ class AppState(rx.State):
         self._hydrate_requirement_drafts(rows)
         if self.requirements_repo.strip():
             self.submit_repo = self.requirements_repo.strip()
+        yield
+
+    async def seed_requirements_milestones(self) -> None:
+        self.requirements_milestone_status = "Working…"
+        yield
+        target_repo = (self.requirements_milestones_repo or self.requirements_repo).strip()
+        status, _ = create_milestones_batch(
+            self.github_token,
+            target_repo,
+            self.milestone_queue_text,
+        )
+        self.requirements_milestone_status = status
+        if status.startswith("✅") or status.startswith("⚠️"):
+            self.requirements_use_milestones = True
+            if target_repo:
+                self.requirements_milestones_repo = target_repo
         yield
 
     async def submit_requirement_drafts(self) -> None:

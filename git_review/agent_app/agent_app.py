@@ -472,10 +472,10 @@ def _activity_page() -> rx.Component:
 def _milestones_page() -> rx.Component:
     return _page_shell(
         "Milestones",
-        "Create milestones and review the current release plan without leaving the app.",
+        "Queue several milestones, load defaults from the environment, and push them in one run.",
         _section_card(
-            "Create a milestone",
-            "Use the shared repo settings or override them here for a one-off release.",
+            "Build the milestone queue",
+            "Use the single-milestone form to stage entries, then create everything in one batch.",
             rx.hstack(
                 _labeled_field(
                     "Repository",
@@ -523,9 +523,28 @@ def _milestones_page() -> rx.Component:
             rx.hstack(
                 _choice_button("milestone_state", "open", "Open"),
                 _choice_button("milestone_state", "closed", "Closed"),
-                rx.button("Create milestone", on_click=AppState.create_milestone_workflow, color_scheme="indigo"),
+                rx.button("Add to queue", on_click=AppState.queue_current_milestone, color_scheme="indigo"),
+                rx.button("Create current only", on_click=AppState.create_milestone_workflow, variant="ghost"),
                 spacing="3",
             ),
+            _labeled_field(
+                "Queued milestones",
+                rx.text_area(
+                    value=AppState.milestone_queue_text,
+                    on_change=lambda value: AppState.set_workflow_field("milestone_queue_text", value),
+                    min_rows=8,
+                    width="100%",
+                ),
+                "One milestone per line. Format: title | due_on | state | description. "
+                "Shortcuts also support title only, title | description, or title | due_on | description.",
+            ),
+            rx.hstack(
+                rx.button("Load defaults from env", on_click=AppState.load_default_milestones),
+                rx.button("Create queued milestones", on_click=AppState.create_queued_milestones_workflow, color_scheme="indigo"),
+                rx.button("Clear queue", on_click=AppState.clear_milestone_queue, variant="ghost", color_scheme="gray"),
+                spacing="3",
+            ),
+            _status_block("Queue/default status", AppState.milestone_defaults_status),
             _status_block("Create result", AppState.milestone_create_result),
         ),
         _section_card(
@@ -663,8 +682,8 @@ def _requirements_page() -> rx.Component:
             ),
         ),
         _section_card(
-            "Step 2 · Generate drafts",
-            "Optionally provide milestone context so the generated issues map to the current plan.",
+            "Step 2 · Seed milestones and generate drafts",
+            "Use the shared milestone queue to create the roadmap first, then parse requirements against the live repo milestones.",
             rx.hstack(
                 rx.button(
                     rx.cond(
@@ -677,9 +696,21 @@ def _requirements_page() -> rx.Component:
                     color_scheme=rx.cond(AppState.requirements_use_milestones, "indigo", "gray"),
                     on_click=AppState.toggle_workflow_flag("requirements_use_milestones"),
                 ),
+                rx.button("Load default milestones", on_click=AppState.load_default_milestones),
+                rx.button("Create queued milestones", on_click=AppState.seed_requirements_milestones),
                 rx.button("Parse requirements", on_click=AppState.parse_requirements_workflow, color_scheme="indigo"),
                 rx.button("Clear drafts", on_click=AppState.clear_requirement_drafts, variant="ghost", color_scheme="gray"),
                 spacing="3",
+            ),
+            _labeled_field(
+                "Milestone queue",
+                rx.text_area(
+                    value=AppState.milestone_queue_text,
+                    on_change=lambda value: AppState.set_workflow_field("milestone_queue_text", value),
+                    min_rows=6,
+                    width="100%",
+                ),
+                "Shared with the Milestones page so you can keep one milestone plan across both workflows.",
             ),
             _labeled_field(
                 "Milestones repo",
@@ -691,6 +722,8 @@ def _requirements_page() -> rx.Component:
                 ),
                 "Leave blank to reuse the requirements repository.",
             ),
+            rx.button("Use milestones for parsing", on_click=AppState.use_milestones_for_requirements, variant="ghost"),
+            _status_block("Milestone seed status", AppState.requirements_milestone_status),
             _status_block("Parse status", AppState.requirements_status),
         ),
         _section_card(

@@ -105,6 +105,14 @@ class AppState(rx.State):
     agent_model: str = "gpt-4o"
     owner: str = ""
     repo: str = ""
+    servicenow_enabled: bool = False
+    servicenow_url: str = ""
+    servicenow_user: str = ""
+    servicenow_password: str = ""
+    servicenow_token: str = ""
+    servicenow_milestone_table: str = "u_github_milestone"
+    servicenow_issue_table: str = "u_github_issue"
+    servicenow_cursor_path: str = ".git-review-sync-cursor.json"
     settings_open: bool = False
 
     # ---- Backend-only (not sent to frontend) ----
@@ -126,6 +134,21 @@ class AppState(rx.State):
             self.openai_base_url = settings.openai_base_url
         if settings.agent_model:
             self.agent_model = settings.agent_model
+        self.servicenow_enabled = bool(settings.servicenow_enabled)
+        if settings.servicenow_url:
+            self.servicenow_url = settings.servicenow_url
+        if settings.servicenow_user:
+            self.servicenow_user = settings.servicenow_user
+        if settings.servicenow_password:
+            self.servicenow_password = settings.servicenow_password
+        if settings.servicenow_token:
+            self.servicenow_token = settings.servicenow_token
+        if settings.servicenow_milestone_table:
+            self.servicenow_milestone_table = settings.servicenow_milestone_table
+        if settings.servicenow_issue_table:
+            self.servicenow_issue_table = settings.servicenow_issue_table
+        if settings.servicenow_cursor_path:
+            self.servicenow_cursor_path = settings.servicenow_cursor_path
 
     # ------------------------------------------------------------------ #
     # Settings sidebar
@@ -152,6 +175,30 @@ class AppState(rx.State):
     def set_repo(self, value: str) -> None:
         self.repo = value
 
+    def toggle_servicenow_enabled(self) -> None:
+        self.servicenow_enabled = not self.servicenow_enabled
+
+    def set_servicenow_url(self, value: str) -> None:
+        self.servicenow_url = value
+
+    def set_servicenow_user(self, value: str) -> None:
+        self.servicenow_user = value
+
+    def set_servicenow_password(self, value: str) -> None:
+        self.servicenow_password = value
+
+    def set_servicenow_token(self, value: str) -> None:
+        self.servicenow_token = value
+
+    def set_servicenow_milestone_table(self, value: str) -> None:
+        self.servicenow_milestone_table = value
+
+    def set_servicenow_issue_table(self, value: str) -> None:
+        self.servicenow_issue_table = value
+
+    def set_servicenow_cursor_path(self, value: str) -> None:
+        self.servicenow_cursor_path = value
+
     def set_input_value(self, value: str) -> None:
         self.input_value = value
 
@@ -167,6 +214,14 @@ class AppState(rx.State):
             openai_api_key=self.openai_key,
             openai_base_url=self.openai_base_url,
             model=self.agent_model,
+            servicenow_enabled=self.servicenow_enabled,
+            servicenow_url=self.servicenow_url,
+            servicenow_user=self.servicenow_user,
+            servicenow_password=self.servicenow_password,
+            servicenow_token=self.servicenow_token,
+            servicenow_milestone_table=self.servicenow_milestone_table,
+            servicenow_issue_table=self.servicenow_issue_table,
+            servicenow_cursor_path=self.servicenow_cursor_path,
         )
 
     def _append(self, msg: ChatMessage) -> None:

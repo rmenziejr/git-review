@@ -44,6 +44,14 @@ class AppSettings(BaseSettings):
     ``git_review_model``    ``GIT_REVIEW_MODEL``
     ``openai_base_url``     ``OPENAI_BASE_URL``
     ``agent_model``         ``AGENT_MODEL``
+    ``servicenow_enabled``  ``SERVICENOW_ENABLED``
+    ``servicenow_url``      ``SERVICENOW_URL``
+    ``servicenow_user``     ``SERVICENOW_USER``
+    ``servicenow_password`` ``SERVICENOW_PASSWORD``
+    ``servicenow_token``    ``SERVICENOW_TOKEN``
+    ``servicenow_milestone_table`` ``SERVICENOW_MILESTONE_TABLE``
+    ``servicenow_issue_table`` ``SERVICENOW_ISSUE_TABLE``
+    ``servicenow_cursor_path`` ``SERVICENOW_CURSOR_PATH``
     ``gradio_server_name``  ``GRADIO_SERVER_NAME``
     ``gradio_server_port``  ``GRADIO_SERVER_PORT``
     ======================  =======================
@@ -82,6 +90,38 @@ class AppSettings(BaseSettings):
             "LLM model identifier used by the conversational agent "
             "(e.g. 'gpt-4o', 'gpt-4o-mini')."
         ),
+    )
+    servicenow_enabled: bool = Field(
+        default=False,
+        description="Enable ServiceNow integration in UIs and agent tools.",
+    )
+    servicenow_url: str = Field(
+        default="",
+        description="ServiceNow instance URL (e.g. https://example.service-now.com).",
+    )
+    servicenow_user: str = Field(
+        default="",
+        description="ServiceNow username (when not using token auth).",
+    )
+    servicenow_password: str = Field(
+        default="",
+        description="ServiceNow password (when not using token auth).",
+    )
+    servicenow_token: str = Field(
+        default="",
+        description="ServiceNow bearer token.",
+    )
+    servicenow_milestone_table: str = Field(
+        default="u_github_milestone",
+        description="ServiceNow table for milestone sync records.",
+    )
+    servicenow_issue_table: str = Field(
+        default="u_github_issue",
+        description="ServiceNow table for issue/task sync records.",
+    )
+    servicenow_cursor_path: str = Field(
+        default=".git-review-sync-cursor.json",
+        description="File path for incremental GitHub→ServiceNow cursor storage.",
     )
     gradio_server_name: str = Field(
         default="0.0.0.0",

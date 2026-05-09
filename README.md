@@ -370,6 +370,7 @@ browser to access the UI.
 |---|---|
 | **📊 Summarize Activity** | Fetch GitHub activity (commits, issues, PRs, releases) for a repo and generate an AI summary |
 | **🏁 Milestones** | Create a new milestone or list existing milestones in a repository |
+| **🔄 ServiceNow Sync** | Preview/apply incremental GitHub → ServiceNow milestone/issue sync with cursor tracking |
 | **📄 Parse Requirements** | Upload or fetch a markdown requirements file and generate issue drafts via LLM |
 | **🚀 Submit Issues** | Review, edit, and selectively push the generated issue drafts to GitHub |
 | **🗂️ Agile Planner** | Fetch open issues/PRs, show the dependency graph, generate a sprint plan, and optionally write blocking relationships back to GitHub |
@@ -385,6 +386,13 @@ with two additional variables for the server:
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `GIT_REVIEW_MODEL` | Default LLM model | `gpt-4o-mini` |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL | — |
+| `SERVICENOW_URL` | ServiceNow instance URL (sync tab default) | — |
+| `SERVICENOW_USER` | ServiceNow username (if not using token auth) | — |
+| `SERVICENOW_PASSWORD` | ServiceNow password (if not using token auth) | — |
+| `SERVICENOW_TOKEN` | ServiceNow bearer token | — |
+| `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
+| `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
+| `SERVICENOW_CURSOR_PATH` | Incremental sync cursor file path | `.git-review-sync-cursor.json` |
 | `GRADIO_SERVER_NAME` | Hostname or IP address to bind to | `0.0.0.0` |
 | `GRADIO_SERVER_PORT` | TCP port | `7860` |
 
@@ -424,6 +432,18 @@ environment variables / `.env` entries:
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL (Ollama, Azure, etc.) | — |
 | `AGENT_MODEL` | LLM model used by the agent | `gpt-4o` |
+| `SERVICENOW_ENABLED` | Enable ServiceNow tools in the agent UI (`true`/`false`) | `false` |
+| `SERVICENOW_URL` | ServiceNow instance URL | — |
+| `SERVICENOW_USER` | ServiceNow username (if not using token auth) | — |
+| `SERVICENOW_PASSWORD` | ServiceNow password (if not using token auth) | — |
+| `SERVICENOW_TOKEN` | ServiceNow bearer token | — |
+| `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
+| `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
+| `SERVICENOW_CURSOR_PATH` | Cursor file path for incremental sync | `.git-review-sync-cursor.json` |
+
+When ServiceNow integration is enabled in the settings sidebar, the agent can
+use `preview_servicenow_sync` (dry run) and `apply_servicenow_sync` (write mode,
+with HITL approval) against the configured repository.
 
 ### Streaming UX
 

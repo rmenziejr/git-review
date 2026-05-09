@@ -55,7 +55,7 @@ except ImportError as _exc:  # pragma: no cover
 
 from .agent_tools import (
     AgentContext,
-    ALL_TOOLS,
+    get_tools_for_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,10 +108,17 @@ def build_agent(ctx: AgentContext) -> Agent[AgentContext]:
         owner=ctx.owner or "<not set>",
         repo=ctx.repo or "<not set>",
     )
+    if ctx.servicenow_enabled:
+        system_prompt += (
+            "\n\nServiceNow integration is enabled for this session.\n"
+            "- Use preview_servicenow_sync for dry-run reconciliation.\n"
+            "- Use apply_servicenow_sync only when the user asks to apply changes."
+        )
+    tools = get_tools_for_context(ctx)
     return Agent(
         name="GitReviewAgent",
         instructions=system_prompt,
-        tools=list(ALL_TOOLS),
+        tools=tools,
     )
 
 

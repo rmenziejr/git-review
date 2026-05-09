@@ -6,7 +6,7 @@ import base64
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from dateutil.parser import isoparse
@@ -80,6 +80,43 @@ class GitHubClient:
         response = self._session.post(url, json=json)
         response.raise_for_status()
         return response.json()
+
+    def _graphql(self, query: str, variables: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Run a GraphQL query/mutation against GitHub and return the ``data`` object."""
+        parsed = urlparse(self._base_url)
+        path = parsed.path or "/"
+        if "/api/v3" in path:
+            graphql_path = path.replace("/api/v3", "/api/graphql")
+        else:
+            graphql_path = "/graphql"
+        graphql_url = f"{parsed.scheme}://{parsed.netloc}{graphql_path}"
+        response = self._session.post(
+            graphql_url,
+            json={"query": query, "variables": variables or {}},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        errors = payload.get("errors") or []
+        if errors:
+            raise ValueError(f"GitHub GraphQL error: {errors[0].get('message', 'unknown error')}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("GitHub GraphQL response did not include a valid data payload.")
+        return data
+
+    def _resolve_owner_node_id(self, owner: str) -> str:
+        """Return GraphQL node id for an organisation or user login."""
+        query = """
+        query($owner: String!) {
+          organization(login: $owner) { id }
+          user(login: $owner) { id }
+        }
+        """
+        data = self._graphql(query, {"owner": owner})
+        owner_node = (data.get("organization") or {}).get("id") or (data.get("user") or {}).get("id")
+        if not owner_node:
+            raise ValueError(f"Could not resolve GitHub owner '{owner}'.")
+        return str(owner_node)
 
     # ------------------------------------------------------------------
     # Public API
@@ -985,6 +1022,379 @@ class GitHubClient:
                 )
             )
         return milestones
+
+    def read_project_status_board(
+        self,
+        owner: str,
+        project_number: int,
+        *,
+        repo: Optional[str] = None,
+        issue_numbers: Optional[list[int]] = None,
+        status_field_name: str = "Status",
+    ) -> dict[str, Any]:
+        """Read GitHub Projects v2 status board data for a project."""
+        query = """
+        query($owner: String!, $number: Int!, $cursor: String) {
+          organization(login: $owner) {
+            projectV2(number: $number) {
+              id
+              title
+              url
+              fields(first: 100) {
+                nodes {
+                  ... on ProjectV2SingleSelectField {
+                    id
+                    name
+                    options { id name }
+                  }
+                }
+              }
+              items(first: 100, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  content {
+                    __typename
+                    ... on Issue {
+                      number
+                      title
+                      repository { nameWithOwner }
+                      url
+                    }
+                    ... on PullRequest {
+                      number
+                      title
+                      repository { nameWithOwner }
+                      url
+                    }
+                  }
+                  fieldValues(first: 50) {
+                    nodes {
+                      ... on ProjectV2ItemFieldSingleSelectValue {
+                        field { ... on ProjectV2SingleSelectField { name } }
+                        name
+                        optionId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          user(login: $owner) {
+            projectV2(number: $number) {
+              id
+              title
+              url
+              fields(first: 100) {
+                nodes {
+                  ... on ProjectV2SingleSelectField {
+                    id
+                    name
+                    options { id name }
+                  }
+                }
+              }
+              items(first: 100, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  content {
+                    __typename
+                    ... on Issue {
+                      number
+                      title
+                      repository { nameWithOwner }
+                      url
+                    }
+                    ... on PullRequest {
+                      number
+                      title
+                      repository { nameWithOwner }
+                      url
+                    }
+                  }
+                  fieldValues(first: 50) {
+                    nodes {
+                      ... on ProjectV2ItemFieldSingleSelectValue {
+                        field { ... on ProjectV2SingleSelectField { name } }
+                        name
+                        optionId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        cursor: Optional[str] = None
+        project_node: Optional[dict[str, Any]] = None
+        items: list[dict[str, Any]] = []
+        while True:
+            data = self._graphql(query, {"owner": owner, "number": int(project_number), "cursor": cursor})
+            org_node = (data.get("organization") or {}).get("projectV2")
+            user_node = (data.get("user") or {}).get("projectV2")
+            project_node = org_node or user_node
+            if not isinstance(project_node, dict):
+                raise ValueError(f"Could not find Projects v2 project #{project_number} for '{owner}'.")
+
+            item_data = (project_node.get("items") or {})
+            item_nodes = item_data.get("nodes") or []
+            if isinstance(item_nodes, list):
+                items.extend(item_nodes)
+            page_info = item_data.get("pageInfo") or {}
+            if not page_info.get("hasNextPage"):
+                break
+            cursor = page_info.get("endCursor")
+            if not cursor:
+                break
+
+        fields = (project_node.get("fields") or {}).get("nodes") or []
+        status_field = next(
+            (
+                field
+                for field in fields
+                if isinstance(field, dict)
+                and (field.get("name") or "").strip().lower() == status_field_name.strip().lower()
+            ),
+            None,
+        )
+        if not isinstance(status_field, dict):
+            raise ValueError(
+                f"Status field '{status_field_name}' not found in project #{project_number}."
+            )
+
+        issue_filter = {int(n) for n in (issue_numbers or [])}
+        filtered: list[dict[str, Any]] = []
+        for item in items:
+            content = item.get("content") or {}
+            item_number = content.get("number")
+            item_repo = ((content.get("repository") or {}).get("nameWithOwner") or "").strip()
+            if not item_number:
+                continue
+            if repo and item_repo.lower() != repo.strip().lower():
+                continue
+            if issue_filter and int(item_number) not in issue_filter:
+                continue
+            status_value = ""
+            for field_value in ((item.get("fieldValues") or {}).get("nodes") or []):
+                field_name = (((field_value or {}).get("field") or {}).get("name") or "").strip()
+                if field_name.lower() == status_field.get("name", "").strip().lower():
+                    status_value = (field_value.get("name") or "").strip()
+                    break
+            filtered.append(
+                {
+                    "item_id": item.get("id"),
+                    "number": int(item_number),
+                    "title": content.get("title") or "",
+                    "type": content.get("__typename") or "",
+                    "repo": item_repo,
+                    "status": status_value,
+                    "url": content.get("url") or "",
+                }
+            )
+
+        filtered.sort(key=lambda x: x.get("number", 0))
+        options = [
+            {"id": opt.get("id"), "name": opt.get("name", "")}
+            for opt in (status_field.get("options") or [])
+            if isinstance(opt, dict)
+        ]
+        return {
+            "project_id": project_node.get("id"),
+            "project_title": project_node.get("title", ""),
+            "project_url": project_node.get("url", ""),
+            "project_number": int(project_number),
+            "status_field_id": status_field.get("id"),
+            "status_field_name": status_field.get("name", ""),
+            "status_options": options,
+            "items": filtered,
+        }
+
+    def update_project_item_status(
+        self,
+        owner: str,
+        project_number: int,
+        issue_number: int,
+        status: str,
+        *,
+        repo: Optional[str] = None,
+        status_field_name: str = "Status",
+    ) -> dict[str, Any]:
+        """Update a Projects v2 single-select status field for one issue/PR item."""
+        board = self.read_project_status_board(
+            owner=owner,
+            project_number=project_number,
+            repo=repo,
+            issue_numbers=[issue_number],
+            status_field_name=status_field_name,
+        )
+        if not board.get("items"):
+            scope = f" in {repo}" if repo else ""
+            raise ValueError(
+                f"Issue/PR #{issue_number} is not in project #{project_number}{scope}."
+            )
+        item = board["items"][0]
+        desired = (status or "").strip().lower()
+        option = next(
+            (
+                opt
+                for opt in board.get("status_options", [])
+                if (opt.get("name") or "").strip().lower() == desired
+            ),
+            None,
+        )
+        if not option or not option.get("id"):
+            allowed = ", ".join(opt.get("name", "") for opt in board.get("status_options", []))
+            raise ValueError(
+                f"Unknown status '{status}'. Available statuses: {allowed}"
+            )
+        mutation = """
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+          updateProjectV2ItemFieldValue(
+            input: {
+              projectId: $projectId
+              itemId: $itemId
+              fieldId: $fieldId
+              value: { singleSelectOptionId: $optionId }
+            }
+          ) {
+            projectV2Item { id }
+          }
+        }
+        """
+        self._graphql(
+            mutation,
+            {
+                "projectId": board.get("project_id"),
+                "itemId": item.get("item_id"),
+                "fieldId": board.get("status_field_id"),
+                "optionId": option.get("id"),
+            },
+        )
+        return {
+            "project_number": int(project_number),
+            "project_title": board.get("project_title", ""),
+            "issue_number": int(issue_number),
+            "repo": item.get("repo", ""),
+            "status_field": board.get("status_field_name", ""),
+            "status": option.get("name", ""),
+            "item_id": item.get("item_id"),
+        }
+
+    def list_projects(
+        self,
+        owner: str,
+        *,
+        repo: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """List Projects v2 visible for an owner or specific repository."""
+        if repo:
+            query = """
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+            }
+            """
+            data = self._graphql(query, {"owner": owner, "repo": repo})
+            nodes = (((data.get("repository") or {}).get("projectsV2") or {}).get("nodes") or [])
+        else:
+            query = """
+            query($owner: String!) {
+              organization(login: $owner) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+              user(login: $owner) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+            }
+            """
+            data = self._graphql(query, {"owner": owner})
+            root = data.get("organization") or data.get("user") or {}
+            nodes = ((root.get("projectsV2") or {}).get("nodes") or [])
+
+        projects: list[dict[str, Any]] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            projects.append(
+                {
+                    "id": node.get("id", ""),
+                    "number": int(node.get("number", 0) or 0),
+                    "title": node.get("title", ""),
+                    "description": node.get("shortDescription", "") or "",
+                    "url": node.get("url", ""),
+                    "closed": bool(node.get("closed", False)),
+                    "updated_at": node.get("updatedAt", "") or "",
+                }
+            )
+        projects.sort(key=lambda item: item["number"])
+        return projects
+
+    def create_project(
+        self,
+        owner: str,
+        title: str,
+    ) -> dict[str, Any]:
+        """Create a new Projects v2 board under an org/user owner."""
+        owner_id = self._resolve_owner_node_id(owner)
+        mutation = """
+        mutation($ownerId: ID!, $title: String!) {
+          createProjectV2(input: { ownerId: $ownerId, title: $title }) {
+            projectV2 {
+              id
+              number
+              title
+              url
+              closed
+            }
+          }
+        }
+        """
+        data = self._graphql(mutation, {"ownerId": owner_id, "title": title})
+        project = ((data.get("createProjectV2") or {}).get("projectV2") or {})
+        if not project:
+            raise ValueError("GitHub did not return the created project.")
+        return {
+            "id": project.get("id", ""),
+            "number": int(project.get("number", 0) or 0),
+            "title": project.get("title", ""),
+            "url": project.get("url", ""),
+            "closed": bool(project.get("closed", False)),
+        }
 
 
 # ------------------------------------------------------------------

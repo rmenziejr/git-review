@@ -773,8 +773,19 @@ def _requirements_page() -> rx.Component:
                     width="100%",
                 ),
             ),
-            rx.button("Submit issues", on_click=AppState.submit_requirement_drafts, color_scheme="indigo"),
+            rx.hstack(
+                rx.button("Submit issues", on_click=AppState.submit_requirement_drafts, color_scheme="indigo"),
+                rx.button(
+                    "List open issues",
+                    on_click=AppState.list_submit_open_issues_workflow,
+                    variant="soft",
+                    color_scheme="gray",
+                ),
+                spacing="3",
+            ),
             _status_block("Submit status", AppState.submit_status),
+            _status_block("Open issues status", AppState.submit_open_issues_status),
+            _markdown_block("Open issues", AppState.submit_open_issues_markdown),
         ),
     )
 
@@ -829,7 +840,7 @@ def _servicenow_page() -> rx.Component:
 def _agile_page() -> rx.Component:
     return _page_shell(
         "Agile planner",
-        "Generate dependency-aware sprint plans and apply the approved graph or label updates.",
+        "Generate dependency-aware sprint plans, read project status boards, and apply approved updates.",
         _section_card(
             "Planning inputs",
             "Point the planner at a repository or owner and tune the sprint configuration.",
@@ -877,8 +888,120 @@ def _agile_page() -> rx.Component:
             _status_block("Planning status", AppState.agile_status),
             _status_block("Apply status", AppState.agile_apply_status),
         ),
+        _section_card(
+            "Project status board",
+            "Read project statuses for sprint issues and update item status during the sprint.",
+            rx.hstack(
+                _labeled_field(
+                    "Project number",
+                    rx.input(
+                        value=AppState.agile_project_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_number", value),
+                        placeholder="12",
+                        width="100%",
+                    ),
+                ),
+                _labeled_field(
+                    "Status field",
+                    rx.input(
+                        value=AppState.agile_project_status_field,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_field", value),
+                        placeholder="Status",
+                        width="100%",
+                    ),
+                ),
+                _labeled_field(
+                    "Sprint # filter (optional)",
+                    rx.input(
+                        value=AppState.agile_project_sprint_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_sprint_number", value),
+                        placeholder="1",
+                        width="100%",
+                    ),
+                ),
+                width="100%",
+            ),
+            rx.hstack(
+                rx.button("Read board", on_click=AppState.read_agile_project_board_workflow, color_scheme="indigo"),
+                _labeled_field(
+                    "Issue/PR #",
+                    rx.input(
+                        value=AppState.agile_project_issue_number,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_issue_number", value),
+                        placeholder="123",
+                        width="160px",
+                    ),
+                ),
+                _labeled_field(
+                    "New status",
+                    rx.input(
+                        value=AppState.agile_project_status_value,
+                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_value", value),
+                        placeholder="In Progress",
+                        width="220px",
+                    ),
+                ),
+                rx.button(
+                    "Update status",
+                    on_click=AppState.update_agile_project_status_workflow,
+                    color_scheme="indigo",
+                    variant="soft",
+                ),
+                spacing="3",
+                align_items="end",
+                width="100%",
+            ),
+            _status_block("Project board status", AppState.agile_project_board_status),
+        ),
+        _section_card(
+            "Repo and project context",
+            "List repos and projects, create a project board if needed, and review open issues for sprint execution.",
+            rx.hstack(
+                rx.button(
+                    "List owner repositories",
+                    on_click=AppState.list_agile_repositories_workflow,
+                    variant="soft",
+                ),
+                rx.button(
+                    "List projects",
+                    on_click=AppState.list_agile_projects_workflow,
+                    variant="soft",
+                ),
+                spacing="3",
+            ),
+            rx.hstack(
+                _labeled_field(
+                    "New project title",
+                    rx.input(
+                        value=AppState.agile_new_project_title,
+                        on_change=lambda value: AppState.set_workflow_field("agile_new_project_title", value),
+                        placeholder="Sprint Board",
+                        width="100%",
+                    ),
+                ),
+                rx.button(
+                    "Create project",
+                    on_click=AppState.create_agile_project_workflow,
+                    color_scheme="indigo",
+                    variant="soft",
+                ),
+                width="100%",
+                align_items="end",
+            ),
+            rx.button(
+                "List open issues for repo",
+                on_click=AppState.list_agile_open_issues_workflow,
+                variant="soft",
+            ),
+            _status_block("Context status", AppState.agile_context_status),
+            _status_block("Open issues status", AppState.agile_open_issues_status),
+        ),
+        _markdown_block("Repositories", AppState.agile_repos_markdown),
+        _markdown_block("Projects", AppState.agile_projects_markdown),
+        _markdown_block("Open issues", AppState.agile_open_issues_markdown),
         _markdown_block("Dependency graph", AppState.agile_dependencies_markdown),
         _markdown_block("Sprint plan", AppState.agile_plan_markdown),
+        _markdown_block("Project board", AppState.agile_project_board_markdown),
     )
 
 

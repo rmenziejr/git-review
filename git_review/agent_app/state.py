@@ -45,17 +45,23 @@ from ..ui_workflows import (
     apply_agile_labels,
     apply_agile_relationships,
     append_milestone_to_batch,
+    create_project_for_owner,
     create_milestone,
     create_milestones_batch,
     fetch_requirements_from_repo,
+    list_open_issues_for_repo,
+    list_projects_for_target,
+    list_repositories_for_owner,
     list_milestones,
     load_default_milestones_text,
     parse_requirements,
+    read_agile_project_board,
     run_agile_planner,
     run_agile_planner_state,
     submit_issues,
     summarize_activity,
     sync_servicenow,
+    update_agile_project_status,
 )
 
 try:
@@ -184,6 +190,8 @@ class AppState(rx.State):
     submit_repo: str = ""
     submit_milestone_override: str = ""
     submit_status: str = ""
+    submit_open_issues_markdown: str = ""
+    submit_open_issues_status: str = ""
 
     agile_repo: str = ""
     agile_capacity: str = "10"
@@ -192,6 +200,19 @@ class AppState(rx.State):
     agile_dependencies_markdown: str = ""
     agile_plan_markdown: str = ""
     agile_apply_status: str = ""
+    agile_project_number: str = ""
+    agile_project_status_field: str = "Status"
+    agile_project_sprint_number: str = ""
+    agile_project_issue_number: str = ""
+    agile_project_status_value: str = ""
+    agile_project_board_markdown: str = ""
+    agile_project_board_status: str = ""
+    agile_repos_markdown: str = ""
+    agile_projects_markdown: str = ""
+    agile_context_status: str = ""
+    agile_new_project_title: str = ""
+    agile_open_issues_markdown: str = ""
+    agile_open_issues_status: str = ""
 
     # ---- Backend-only (not sent to frontend) ----
     _pending_result: Any = None
@@ -411,9 +432,9 @@ class AppState(rx.State):
             for row in rows
         ]
 
-    def _safe_int(self, raw: str, default: int) -> int:
+    def _safe_int(self, raw: str, default: int, min_value: int = 1) -> int:
         try:
-            return max(1, int((raw or "").strip() or str(default)))
+            return max(min_value, int((raw or "").strip() or str(default)))
         except ValueError:
             return default
 
@@ -552,11 +573,30 @@ class AppState(rx.State):
         )
         yield
 
+    async def list_submit_open_issues_workflow(self) -> None:
+        self.submit_open_issues_status = "Working…"
+        self.submit_open_issues_markdown = ""
+        yield
+        markdown, status = list_open_issues_for_repo(
+            self.github_token,
+            self.submit_repo,
+        )
+        self.submit_open_issues_markdown = markdown
+        self.submit_open_issues_status = status
+        yield
+
     async def run_agile_workflow(self) -> None:
         self.agile_status = "Working…"
         self.agile_apply_status = ""
         self.agile_dependencies_markdown = ""
         self.agile_plan_markdown = ""
+        self.agile_open_issues_markdown = ""
+        self.agile_open_issues_status = ""
+        self.agile_repos_markdown = ""
+        self.agile_projects_markdown = ""
+        self.agile_context_status = ""
+        self.agile_project_board_markdown = ""
+        self.agile_project_board_status = ""
         self._agile_result = None
         yield
         deps_md, plan_md, status = run_agile_planner(
@@ -604,6 +644,81 @@ class AppState(rx.State):
             False,
             self._agile_result,
         )
+        yield
+
+    async def read_agile_project_board_workflow(self) -> None:
+        self.agile_project_board_status = "Working…"
+        self.agile_project_board_markdown = ""
+        yield
+        markdown, status = read_agile_project_board(
+            self.github_token,
+            self.agile_repo,
+            self._safe_int(self.agile_project_number, 0, min_value=0),
+            self.agile_project_status_field,
+            self._safe_int(self.agile_project_sprint_number, 0, min_value=0),
+            self._agile_result,
+        )
+        self.agile_project_board_markdown = markdown
+        self.agile_project_board_status = status
+        yield
+
+    async def update_agile_project_status_workflow(self) -> None:
+        self.agile_project_board_status = "Working…"
+        yield
+        self.agile_project_board_status = update_agile_project_status(
+            self.github_token,
+            self.agile_repo,
+            self._safe_int(self.agile_project_number, 0, min_value=0),
+            self._safe_int(self.agile_project_issue_number, 0, min_value=0),
+            self.agile_project_status_value,
+            self.agile_project_status_field,
+        )
+        yield
+
+    async def list_agile_repositories_workflow(self) -> None:
+        self.agile_context_status = "Working…"
+        self.agile_repos_markdown = ""
+        yield
+        markdown, status = list_repositories_for_owner(
+            self.github_token,
+            self.agile_repo,
+        )
+        self.agile_repos_markdown = markdown
+        self.agile_context_status = status
+        yield
+
+    async def list_agile_projects_workflow(self) -> None:
+        self.agile_context_status = "Working…"
+        self.agile_projects_markdown = ""
+        yield
+        markdown, status = list_projects_for_target(
+            self.github_token,
+            self.agile_repo,
+        )
+        self.agile_projects_markdown = markdown
+        self.agile_context_status = status
+        yield
+
+    async def create_agile_project_workflow(self) -> None:
+        self.agile_context_status = "Working…"
+        yield
+        self.agile_context_status = create_project_for_owner(
+            self.github_token,
+            self.agile_repo,
+            self.agile_new_project_title,
+        )
+        yield
+
+    async def list_agile_open_issues_workflow(self) -> None:
+        self.agile_open_issues_status = "Working…"
+        self.agile_open_issues_markdown = ""
+        yield
+        markdown, status = list_open_issues_for_repo(
+            self.github_token,
+            self.agile_repo,
+        )
+        self.agile_open_issues_markdown = markdown
+        self.agile_open_issues_status = status
         yield
 
     # ------------------------------------------------------------------ #

@@ -1173,3 +1173,267 @@ def test_get_file_content_strips_leading_slash_from_path() -> None:
     # Leading slash should be stripped silently
     result = client.get_file_content("acme", "app", "/docs/requirements.md")
     assert result == content
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient Projects v2 (GraphQL)
+# ---------------------------------------------------------------------------
+
+
+@responses_lib.activate
+def test_read_project_status_board_filters_repo_and_issue_numbers() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {
+                    "projectV2": {
+                        "id": "PVT_proj",
+                        "title": "Sprint Board",
+                        "url": "https://github.com/orgs/acme/projects/1",
+                        "fields": {
+                            "nodes": [
+                                {
+                                    "id": "PVTSSF_status",
+                                    "name": "Status",
+                                    "options": [
+                                        {"id": "opt_todo", "name": "Todo"},
+                                        {"id": "opt_doing", "name": "In Progress"},
+                                    ],
+                                }
+                            ]
+                        },
+                        "items": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "PVT_item_1",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "number": 1,
+                                        "title": "A",
+                                        "repository": {"nameWithOwner": "acme/app"},
+                                        "url": "https://github.com/acme/app/issues/1",
+                                    },
+                                    "fieldValues": {
+                                        "nodes": [
+                                            {
+                                                "field": {"name": "Status"},
+                                                "name": "In Progress",
+                                                "optionId": "opt_doing",
+                                            }
+                                        ]
+                                    },
+                                },
+                                {
+                                    "id": "PVT_item_2",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "number": 2,
+                                        "title": "B",
+                                        "repository": {"nameWithOwner": "acme/other"},
+                                        "url": "https://github.com/acme/other/issues/2",
+                                    },
+                                    "fieldValues": {"nodes": []},
+                                },
+                            ],
+                        },
+                    }
+                },
+                "user": {"projectV2": None},
+            }
+        },
+        status=200,
+    )
+
+    client = GitHubClient()
+    board = client.read_project_status_board(
+        owner="acme",
+        project_number=1,
+        repo="acme/app",
+        issue_numbers=[1],
+    )
+
+    assert board["project_number"] == 1
+    assert board["project_title"] == "Sprint Board"
+    assert len(board["items"]) == 1
+    assert board["items"][0]["number"] == 1
+    assert board["items"][0]["status"] == "In Progress"
+
+
+@responses_lib.activate
+def test_update_project_item_status_calls_graphql_mutation() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {
+                    "projectV2": {
+                        "id": "PVT_proj",
+                        "title": "Sprint Board",
+                        "url": "https://github.com/orgs/acme/projects/1",
+                        "fields": {
+                            "nodes": [
+                                {
+                                    "id": "PVTSSF_status",
+                                    "name": "Status",
+                                    "options": [
+                                        {"id": "opt_todo", "name": "Todo"},
+                                        {"id": "opt_doing", "name": "In Progress"},
+                                    ],
+                                }
+                            ]
+                        },
+                        "items": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "PVT_item_1",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "number": 1,
+                                        "title": "A",
+                                        "repository": {"nameWithOwner": "acme/app"},
+                                        "url": "https://github.com/acme/app/issues/1",
+                                    },
+                                    "fieldValues": {"nodes": []},
+                                }
+                            ],
+                        },
+                    }
+                },
+                "user": {"projectV2": None},
+            }
+        },
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVT_item_1"}}}},
+        status=200,
+    )
+
+    client = GitHubClient()
+    updated = client.update_project_item_status(
+        owner="acme",
+        project_number=1,
+        issue_number=1,
+        status="In Progress",
+        repo="acme/app",
+    )
+
+    assert updated["issue_number"] == 1
+    assert updated["status"] == "In Progress"
+    assert len(responses_lib.calls) == 2
+
+
+@responses_lib.activate
+def test_list_projects_for_owner_returns_projects() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {
+                    "projectsV2": {
+                        "nodes": [
+                            {
+                                "id": "P1",
+                                "number": 1,
+                                "title": "Roadmap",
+                                "shortDescription": "Main roadmap",
+                                "url": "https://github.com/orgs/acme/projects/1",
+                                "closed": False,
+                                "updatedAt": "2026-05-09T12:00:00Z",
+                            }
+                        ]
+                    }
+                },
+                "user": None,
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    projects = client.list_projects("acme")
+
+    assert len(projects) == 1
+    assert projects[0]["number"] == 1
+    assert projects[0]["title"] == "Roadmap"
+    assert projects[0]["closed"] is False
+
+
+@responses_lib.activate
+def test_list_projects_for_repo_returns_projects() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "repository": {
+                    "projectsV2": {
+                        "nodes": [
+                            {
+                                "id": "P2",
+                                "number": 2,
+                                "title": "Sprint Board",
+                                "shortDescription": "",
+                                "url": "https://github.com/orgs/acme/projects/2",
+                                "closed": True,
+                                "updatedAt": "2026-05-09T12:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    projects = client.list_projects("acme", repo="app")
+
+    assert len(projects) == 1
+    assert projects[0]["number"] == 2
+    assert projects[0]["closed"] is True
+
+
+@responses_lib.activate
+def test_create_project_creates_project_v2() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {"id": "ORG_123"},
+                "user": None,
+            }
+        },
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "createProjectV2": {
+                    "projectV2": {
+                        "id": "PVT_1",
+                        "number": 9,
+                        "title": "Sprint Board",
+                        "url": "https://github.com/orgs/acme/projects/9",
+                        "closed": False,
+                    }
+                }
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    project = client.create_project("acme", "Sprint Board")
+
+    assert project["number"] == 9
+    assert project["title"] == "Sprint Board"
+    assert len(responses_lib.calls) == 2

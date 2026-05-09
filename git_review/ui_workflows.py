@@ -721,6 +721,120 @@ def submit_issues(
     return "\n".join(lines)
 
 
+def list_repositories_for_owner(
+    github_token: str,
+    owner_input: str,
+) -> tuple[str, str]:
+    owner = (owner_input or "").strip()
+    if not owner:
+        return "_No repositories found._", "❌  Owner is required."
+    owner = owner.split("/", 1)[0].replace("*", "").strip()
+    if not owner:
+        return "_No repositories found._", "❌  Owner is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        repos = gh.list_repos(owner)
+    except Exception as exc:
+        return "_No repositories found._", f"❌  Error listing repositories: {exc}"
+    if not repos:
+        return "_No repositories found._", f"ℹ️  No non-archived repositories found for '{owner}'."
+
+    markdown = "\n".join([f"- {owner}/{repo_name}" for repo_name in repos])
+    return markdown, f"✅  Found {len(repos)} repository(ies) for '{owner}'."
+
+
+def list_open_issues_for_repo(
+    github_token: str,
+    repo: str,
+) -> tuple[str, str]:
+    if not repo or "/" not in repo:
+        return "_No issues found._", "❌  Please enter the repository in 'owner/repo' format."
+    owner, repo_name = repo.strip().split("/", 1)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        issues = gh.get_open_issues(owner, repo_name)
+    except Exception as exc:
+        return "_No issues found._", f"❌  Error listing open issues: {exc}"
+
+    if not issues:
+        return "_No issues found._", f"ℹ️  No open issues found in {owner}/{repo_name}."
+
+    lines = [
+        "| Issue | Title | Labels | Assignees |",
+        "|------:|-------|--------|-----------|",
+    ]
+    for issue in issues:
+        labels = ", ".join(issue.labels) if issue.labels else "—"
+        assignees = ", ".join(issue.assignees) if issue.assignees else "—"
+        lines.append(f"| #{issue.number} | {issue.title} | {labels} | {assignees} |")
+    return "\n".join(lines), f"✅  Found {len(issues)} open issue(s) in {owner}/{repo_name}."
+
+
+def list_projects_for_target(
+    github_token: str,
+    target: str,
+) -> tuple[str, str]:
+    raw = (target or "").strip()
+    if not raw:
+        return "_No projects found._", "❌  Enter an owner or owner/repo."
+
+    owner = raw.split("/", 1)[0].replace("*", "").strip()
+    repo_name: Optional[str] = None
+    if "/" in raw and not raw.endswith("/*"):
+        _, repo_part = raw.split("/", 1)
+        if repo_part and repo_part != "*":
+            repo_name = repo_part.strip()
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        projects = gh.list_projects(owner=owner, repo=repo_name)
+    except Exception as exc:
+        return "_No projects found._", f"❌  Error listing projects: {exc}"
+    if not projects:
+        scope = f"{owner}/{repo_name}" if repo_name else owner
+        return "_No projects found._", f"ℹ️  No projects found for {scope}."
+
+    lines = [
+        "| Project # | Title | State | URL |",
+        "|----------:|-------|-------|-----|",
+    ]
+    for project in projects:
+        state = "closed" if project.get("closed") else "open"
+        lines.append(
+            f"| {project.get('number')} | {project.get('title', '')} | {state} | {project.get('url', '')} |"
+        )
+    scope = f"{owner}/{repo_name}" if repo_name else owner
+    return "\n".join(lines), f"✅  Found {len(projects)} project(s) for {scope}."
+
+
+def create_project_for_owner(
+    github_token: str,
+    owner_input: str,
+    title: str,
+) -> str:
+    owner = (owner_input or "").strip()
+    if not owner:
+        return "❌  Owner is required."
+    owner = owner.split("/", 1)[0].replace("*", "").strip()
+    if not owner:
+        return "❌  Owner is required."
+    title_value = (title or "").strip()
+    if not title_value:
+        return "❌  Project title is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        project = gh.create_project(owner, title_value)
+    except Exception as exc:
+        return f"❌  Error creating project: {exc}"
+    return (
+        f"✅  Created project #{project.get('number')} '{project.get('title')}' for {owner}.\n"
+        f"{project.get('url', '')}"
+    )
+
+
 def run_agile_planner(
     github_token: str,
     openai_key: str,
@@ -896,3 +1010,104 @@ def apply_agile_labels(
         return f"❌  Error applying labels: {exc}"
 
     return f"✅  Updated labels on {len(responses)} issue(s)."
+
+
+def read_agile_project_board(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    status_field: str,
+    sprint_number: int,
+    result: Any,
+) -> tuple[str, str]:
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return "", f"❌  {exc}"
+    if int(project_number or 0) <= 0:
+        return "", "❌  Project number must be a positive integer."
+
+    issue_numbers: list[int] = []
+    if result is not None:
+        if int(sprint_number or 0) > 0:
+            sprint = next((s for s in result.sprints if s.sprint_number == int(sprint_number)), None)
+            if sprint is None:
+                return "", f"❌  Sprint {int(sprint_number)} was not found in the current plan."
+            issue_numbers = [int(i) for i in sprint.issues]
+        else:
+            all_numbers: set[int] = set()
+            for sprint in result.sprints:
+                all_numbers.update(int(i) for i in sprint.issues)
+            issue_numbers = sorted(all_numbers)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        board = gh.read_project_status_board(
+            owner=owner,
+            project_number=int(project_number),
+            repo=f"{owner}/{repo_name}",
+            issue_numbers=issue_numbers or None,
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return "", f"❌  Error reading project board: {exc}"
+
+    items = board.get("items") or []
+    if not items:
+        scope = "selected sprint issues" if issue_numbers else "the repository"
+        return "_No project items found for the selected scope._", (
+            f"ℹ️  Project #{int(project_number)} returned no items for {scope}."
+        )
+
+    lines = [
+        "| Issue/PR | Type | Status | Title |",
+        "|----------|------|--------|-------|",
+    ]
+    for item in items:
+        lines.append(
+            f"| #{item.get('number')} | {item.get('type', '')} | "
+            f"{item.get('status', '') or '—'} | {item.get('title', '')} |"
+        )
+    markdown = "\n".join(lines)
+    status = (
+        f"✅  Loaded {len(items)} item(s) from project #{int(project_number)} "
+        f"({board.get('project_title', '')})."
+    )
+    return markdown, status
+
+
+def update_agile_project_status(
+    github_token: str,
+    repo: str,
+    project_number: int,
+    issue_number: int,
+    status_value: str,
+    status_field: str,
+) -> str:
+    try:
+        owner, repo_name, _ = _resolve_agile_target_from_input(repo)
+    except ValueError as exc:
+        return f"❌  {exc}"
+    if int(project_number or 0) <= 0:
+        return "❌  Project number must be a positive integer."
+    if int(issue_number or 0) <= 0:
+        return "❌  Issue/PR number must be a positive integer."
+    if not (status_value or "").strip():
+        return "❌  Status value is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        updated = gh.update_project_item_status(
+            owner=owner,
+            project_number=int(project_number),
+            issue_number=int(issue_number),
+            status=status_value.strip(),
+            repo=f"{owner}/{repo_name}",
+            status_field_name=(status_field or "Status").strip() or "Status",
+        )
+    except Exception as exc:
+        return f"❌  Error updating project status: {exc}"
+    return (
+        f"✅  Updated #{updated.get('issue_number')} in project #{updated.get('project_number')} "
+        f"to '{updated.get('status')}'."
+    )

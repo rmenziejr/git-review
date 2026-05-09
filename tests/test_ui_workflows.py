@@ -9,12 +9,18 @@ from git_review.issue_factory import IssueDraft
 from git_review.models import AgilePlanResult, Issue, IssueDependency, PullRequest, SprintRecommendation
 from git_review.ui_workflows import (
     append_milestone_to_batch,
+    create_project_for_owner,
     create_milestones_batch,
     fetch_requirements_from_repo,
+    list_open_issues_for_repo,
+    list_projects_for_target,
+    list_repositories_for_owner,
     load_default_milestones_text,
     parse_requirements,
+    read_agile_project_board,
     run_agile_planner,
     submit_issues,
+    update_agile_project_status,
 )
 
 _DT = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -212,3 +218,97 @@ def test_agent_app_imports_with_multi_page_shell() -> None:
     from git_review.agent_app import agent_app
 
     assert agent_app.app is not None
+
+
+def test_read_agile_project_board_formats_markdown() -> None:
+    result = AgilePlanResult(
+        owner="acme",
+        repo="app",
+        issues=[_issue(1, "A"), _issue(2, "B")],
+        sprints=[SprintRecommendation(sprint_number=1, issues=[1, 2])],
+    )
+    mock_gh = MagicMock()
+    mock_gh.read_project_status_board.return_value = {
+        "project_title": "Sprint Board",
+        "items": [
+            {"number": 1, "type": "Issue", "status": "In Progress", "title": "A"},
+            {"number": 2, "type": "Issue", "status": "Todo", "title": "B"},
+        ],
+    }
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        markdown, status = read_agile_project_board(
+            "ghp_test",
+            "acme/app",
+            3,
+            "Status",
+            1,
+            result,
+        )
+    assert "| #1 | Issue | In Progress | A |" in markdown
+    assert "Loaded 2 item(s) from project #3" in status
+    mock_gh.read_project_status_board.assert_called_once()
+
+
+def test_update_agile_project_status_returns_success() -> None:
+    mock_gh = MagicMock()
+    mock_gh.update_project_item_status.return_value = {
+        "project_number": 3,
+        "issue_number": 12,
+        "status": "Done",
+    }
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        status = update_agile_project_status(
+            "ghp_test",
+            "acme/app",
+            3,
+            12,
+            "Done",
+            "Status",
+        )
+    assert "Updated #12 in project #3 to 'Done'" in status
+
+
+def test_list_repositories_for_owner_returns_markdown() -> None:
+    mock_gh = MagicMock()
+    mock_gh.list_repos.return_value = ["app", "platform"]
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        markdown, status = list_repositories_for_owner("ghp_test", "acme/app")
+
+    assert "- acme/app" in markdown
+    assert "- acme/platform" in markdown
+    assert "Found 2 repository(ies) for 'acme'" in status
+
+
+def test_list_projects_for_target_returns_table() -> None:
+    mock_gh = MagicMock()
+    mock_gh.list_projects.return_value = [
+        {"number": 2, "title": "Sprint 2", "closed": False, "url": "https://example/2"},
+        {"number": 3, "title": "Sprint 3", "closed": True, "url": "https://example/3"},
+    ]
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        markdown, status = list_projects_for_target("ghp_test", "acme/app")
+
+    assert "| 2 | Sprint 2 | open | https://example/2 |" in markdown
+    assert "| 3 | Sprint 3 | closed | https://example/3 |" in markdown
+    assert "Found 2 project(s) for acme/app" in status
+
+
+def test_create_project_for_owner_calls_client() -> None:
+    mock_gh = MagicMock()
+    mock_gh.create_project.return_value = {"number": 7, "title": "Sprint Board", "url": "https://example/7"}
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        status = create_project_for_owner("ghp_test", "acme", "Sprint Board")
+
+    assert "Created project #7 'Sprint Board' for acme" in status
+    mock_gh.create_project.assert_called_once_with("acme", "Sprint Board")
+
+
+def test_list_open_issues_for_repo_returns_table() -> None:
+    mock_gh = MagicMock()
+    mock_gh.get_open_issues.return_value = [_issue(1, "A"), _issue(2, "B")]
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        markdown, status = list_open_issues_for_repo("ghp_test", "acme/app")
+
+    assert "| #1 | A |" in markdown
+    assert "| #2 | B |" in markdown
+    assert "Found 2 open issue(s) in acme/app" in status

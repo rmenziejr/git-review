@@ -41,6 +41,7 @@ directly inside your editor.
 | **Commit message generator** | Write a Conventional Commit message from your staged diff |
 | **Issue generator** | Parse a markdown requirements file and create GitHub issues via LLM |
 | **Milestone management** | Create and list GitHub milestones from the CLI or web app |
+| **ServiceNow sync (GitHub source of truth)** | Incrementally sync GitHub milestones/issues into ServiceNow with cursor tracking, dry-run previews, and conflict reporting |
 | **Agile planner** | Fetch all open issues/PRs, detect blocking dependencies, and generate a prioritised sprint plan via LLM |
 | **Native dependency API** | Write inferred blocking/blocked-by relationships back to GitHub using the native issue-dependencies REST API |
 | **Custom prompts** | Override the LLM system prompt with a Jinja2 template via `--prompt-file` |
@@ -237,6 +238,59 @@ git-review create-issues --repo owner/repo --requirements requirements.md \
 git-review create-issues --repo owner/repo --requirements requirements.md \
   --token ghp_xxx --openai-key sk-xxx --prompt-file my_prompt.j2
 ```
+
+### Sync GitHub milestones/issues to ServiceNow (GitHub as source of truth)
+
+```bash
+# Dry-run first (recommended): preview creates/updates/conflicts only
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-user my_user --servicenow-password my_pass \
+  --dry-run
+
+# Apply sync and advance cursor (incremental after first run)
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-token sn_token_value
+
+# Optional metadata back-sync (off by default)
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-token sn_token_value \
+  --allow-back-sync-field labels --allow-back-sync-field assignees
+```
+
+Field mapping used by `sync-servicenow`:
+
+| GitHub entity | GitHub field | ServiceNow field |
+|---|---|---|
+| Milestone | `repo` | `u_github_repo` |
+| Milestone | `number` | `u_github_milestone_number` |
+| Milestone | `url` | `u_github_milestone_url` |
+| Milestone | `title` | `u_github_milestone_title` |
+| Milestone | `state` | `u_github_state` |
+| Milestone | `due_on` | `u_github_due_on` |
+| Milestone | `updated_at` | `u_github_updated_at` |
+| Issue | `repo` | `u_github_repo` |
+| Issue | `number` | `u_github_issue_number` |
+| Issue | `id` | `u_github_issue_id` |
+| Issue | `url` | `u_github_issue_url` |
+| Issue | `title` | `u_github_title` |
+| Issue | `body` | `u_github_body` |
+| Issue | `state` | `u_github_state` |
+| Issue | `labels` | `u_github_labels` |
+| Issue | `assignees` | `u_github_assignees` |
+| Issue | `milestone.title` | `u_github_milestone_title` |
+| Issue | `updated_at` | `u_github_updated_at` |
+
+Notes:
+- Default flow is one-way **GitHub → ServiceNow**.
+- GitHub IDs and URLs are always persisted in ServiceNow for stable mapping.
+- `--dry-run` prints conflicts so mismatches can be reviewed before apply.
+- Sync is incremental using a per-repo cursor file (`.git-review-sync-cursor.json` by default).
 
 ### Agile sprint planning
 

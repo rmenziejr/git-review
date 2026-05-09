@@ -39,6 +39,7 @@ class Issue:
     assignees: list[str] = field(default_factory=list)
     milestone: Optional[str] = None
     github_id: Optional[int] = None
+    updated_at: Optional[datetime] = None
 
 
 @dataclass
@@ -106,6 +107,7 @@ class Milestone:
     closed_issues: int = 0
     url: str = ""
     repo: str = ""
+    updated_at: Optional[datetime] = None
 
 
 @dataclass

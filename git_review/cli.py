@@ -37,6 +37,14 @@ from rich.table import Table
 
 from .commit_message_generator import CommitMessageGenerator, get_git_diff
 from .github_client import GitHubClient
+from .github_source_sync import (
+    GitHubSourceOfTruthSync,
+    ServiceNowClient,
+    get_repo_cursor,
+    load_sync_cursor,
+    save_sync_cursor,
+    set_repo_cursor,
+)
 from .issue_factory import IssueFactory, IssueDraft
 from .llm_client import LLMClient
 from .models import Commit, Contributor, Issue, IssueDependency, PullRequest, Release, ReviewSummary, SprintRecommendation
@@ -1168,6 +1176,197 @@ def commit_message(
             console.print(f"[red]git commit failed:[/red] {exc}")
             sys.exit(1)
         console.print("[bold green]Committed successfully.[/bold green]")
+
+
+# ---------------------------------------------------------------------------
+# sync-servicenow command
+# ---------------------------------------------------------------------------
+
+@main.command("sync-servicenow")
+@click.option(
+    "--repo",
+    required=True,
+    envvar="GITREVIEW_REPO",
+    metavar="OWNER/REPO",
+    help="Target GitHub repository in 'owner/repo' format.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub personal access token (or set GITHUB_TOKEN env var).",
+)
+@click.option(
+    "--servicenow-url",
+    envvar="SERVICENOW_URL",
+    required=True,
+    help="ServiceNow instance URL (e.g. https://example.service-now.com).",
+)
+@click.option(
+    "--servicenow-user",
+    envvar="SERVICENOW_USER",
+    default=None,
+    help="ServiceNow username (when not using token auth).",
+)
+@click.option(
+    "--servicenow-password",
+    envvar="SERVICENOW_PASSWORD",
+    default=None,
+    help="ServiceNow password (when not using token auth).",
+)
+@click.option(
+    "--servicenow-token",
+    envvar="SERVICENOW_TOKEN",
+    default=None,
+    help="ServiceNow bearer token.",
+)
+@click.option(
+    "--milestone-table",
+    default="u_github_milestones",
+    show_default=True,
+    help="ServiceNow table used for milestone sync records.",
+)
+@click.option(
+    "--issue-table",
+    default="u_github_issues",
+    show_default=True,
+    help="ServiceNow table used for issue/task sync records.",
+)
+@click.option(
+    "--cursor-file",
+    default=".git-review-sync-cursor.json",
+    show_default=True,
+    metavar="FILE",
+    help="Path to JSON cursor state file used for incremental sync.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview creates/updates/conflicts without writing to ServiceNow or advancing cursor.",
+)
+@click.option(
+    "--allow-back-sync-field",
+    "allow_back_sync_fields",
+    multiple=True,
+    type=click.Choice(["labels", "assignees"], case_sensitive=False),
+    help=(
+        "Optional metadata fields allowed to sync back from ServiceNow to GitHub. "
+        "By default, sync is one-way GitHub -> ServiceNow."
+    ),
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging.",
+)
+def sync_servicenow(
+    repo: str,
+    token: Optional[str],
+    servicenow_url: str,
+    servicenow_user: Optional[str],
+    servicenow_password: Optional[str],
+    servicenow_token: Optional[str],
+    milestone_table: str,
+    issue_table: str,
+    cursor_file: str,
+    dry_run: bool,
+    allow_back_sync_fields: tuple[str, ...],
+    verbose: bool,
+) -> None:
+    """Sync GitHub milestones/issues into ServiceNow with GitHub as source of truth."""
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    parts = repo.split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise click.BadParameter("Expected format: owner/repo", param_hint="--repo")
+    owner, repo_name = parts
+    repo_key = f"{owner}/{repo_name}"
+
+    cursor_data = load_sync_cursor(cursor_file)
+    since = get_repo_cursor(cursor_data, repo_key)
+
+    gh = GitHubClient(token=token)
+    try:
+        snow = ServiceNowClient(
+            servicenow_url,
+            user=servicenow_user,
+            password=servicenow_password,
+            token=servicenow_token,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc))
+
+    syncer = GitHubSourceOfTruthSync(
+        gh,
+        snow,
+        milestone_table=milestone_table,
+        issue_table=issue_table,
+    )
+
+    with console.status("[bold green]Syncing GitHub -> ServiceNow…"):
+        try:
+            report, next_cursor = syncer.sync_repo(
+                owner,
+                repo_name,
+                since=since,
+                dry_run=dry_run,
+                allow_back_sync_fields=tuple(f.lower() for f in allow_back_sync_fields),
+            )
+        except Exception as exc:
+            console.print(f"[red]Error syncing ServiceNow:[/red] {exc}")
+            sys.exit(1)
+
+    console.print(f"[cyan]Repo:[/cyan] {repo_key}")
+    if since:
+        console.print(f"[cyan]Cursor:[/cyan] since {since.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    else:
+        console.print("[cyan]Cursor:[/cyan] first sync (no existing cursor)")
+
+    console.print(
+        "[green]Milestones[/green] "
+        f"scanned={report.milestones_scanned} "
+        f"created={report.milestones_created} "
+        f"updated={report.milestones_updated}"
+    )
+    console.print(
+        "[green]Issues[/green] "
+        f"scanned={report.issues_scanned} "
+        f"created={report.issues_created} "
+        f"updated={report.issues_updated}"
+    )
+
+    if report.back_sync_updates:
+        console.print(
+            "[yellow]Back-sync updates[/yellow] "
+            f"applied={report.back_sync_updates} "
+            f"(whitelisted metadata only)"
+        )
+
+    if report.conflicts:
+        console.print(f"[yellow]Conflicts detected:[/yellow] {len(report.conflicts)}")
+        for conflict in report.conflicts:
+            console.print(
+                "  "
+                f"{conflict.entity} {conflict.github_key} "
+                f"{conflict.field}: ServiceNow='{conflict.servicenow_value}' "
+                f"-> GitHub='{conflict.github_value}'"
+            )
+
+    if dry_run:
+        console.print("[dim]Dry-run enabled: no ServiceNow writes and cursor not advanced.[/dim]")
+        return
+
+    set_repo_cursor(cursor_data, repo_key, next_cursor)
+    try:
+        save_sync_cursor(cursor_file, cursor_data)
+    except OSError as exc:
+        console.print(f"[red]Error writing cursor file:[/red] {exc}")
+        sys.exit(1)
+    console.print(f"[green]✓ Cursor updated:[/green] {next_cursor.strftime('%Y-%m-%dT%H:%M:%SZ')}")
 
 
 # ---------------------------------------------------------------------------

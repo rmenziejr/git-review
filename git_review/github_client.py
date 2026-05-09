@@ -306,6 +306,7 @@ class GitHubClient:
                     assignees=[
                         (a.get("login") or "") for a in item.get("assignees", []) if a
                     ],
+                    updated_at=updated,
                 )
             )
         return issues
@@ -574,6 +575,7 @@ class GitHubClient:
                 continue
             closed_at_str = item.get("closed_at")
             milestone_info = item.get("milestone") or {}
+            updated_at_str = item.get("updated_at")
             issues.append(
                 Issue(
                     number=item["number"],
@@ -592,6 +594,7 @@ class GitHubClient:
                     ],
                     milestone=milestone_info.get("title"),
                     github_id=item.get("id"),
+                    updated_at=isoparse(updated_at_str) if updated_at_str else None,
                 )
             )
         return issues
@@ -756,6 +759,7 @@ class GitHubClient:
         item = self._get(f"repos/{owner}/{repo}/issues/{issue_number}")
         closed_at_str = item.get("closed_at")
         milestone_info = item.get("milestone") or {}
+        updated_at_str = item.get("updated_at")
         return Issue(
             number=item["number"],
             title=item.get("title", ""),
@@ -773,6 +777,7 @@ class GitHubClient:
             ],
             milestone=milestone_info.get("title"),
             github_id=item.get("id"),
+            updated_at=isoparse(updated_at_str) if updated_at_str else None,
         )
 
     def update_issue(
@@ -964,6 +969,7 @@ class GitHubClient:
         milestones: list[Milestone] = []
         for item in raw:
             due_on_str = item.get("due_on")
+            updated_at_str = item.get("updated_at")
             milestones.append(
                 Milestone(
                     number=item["number"],
@@ -975,6 +981,7 @@ class GitHubClient:
                     closed_issues=item.get("closed_issues", 0),
                     url=item.get("html_url", ""),
                     repo=f"{owner}/{repo}",
+                    updated_at=isoparse(updated_at_str) if updated_at_str else None,
                 )
             )
         return milestones

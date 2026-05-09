@@ -1532,3 +1532,72 @@ def test_create_issues_use_milestones_no_milestones_continues() -> None:
         call_args.args[1] if len(call_args.args) > 1 else None
     )
     assert not passed_milestones
+
+
+# ---------------------------------------------------------------------------
+# sync-servicenow command
+# ---------------------------------------------------------------------------
+
+def test_sync_servicenow_dry_run_reports_without_advancing_cursor() -> None:
+    from datetime import datetime, timezone
+    from git_review.github_source_sync import SyncReport
+
+    runner = CliRunner()
+    mock_syncer_cls = MagicMock()
+    mock_syncer = mock_syncer_cls.return_value
+    mock_syncer.sync_repo.return_value = (
+        SyncReport(milestones_scanned=1, issues_scanned=2),
+        datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+
+    with patch("git_review.cli.GitHubClient", MagicMock()):
+        with patch("git_review.cli.ServiceNowClient", MagicMock()):
+            with patch("git_review.cli.GitHubSourceOfTruthSync", mock_syncer_cls):
+                with patch("git_review.cli.load_sync_cursor", return_value={}):
+                    with patch("git_review.cli.save_sync_cursor") as save_cursor:
+                        result = runner.invoke(
+                            main,
+                            [
+                                "sync-servicenow",
+                                "--repo", "acme/app",
+                                "--servicenow-url", "https://example.service-now.com",
+                                "--servicenow-token", "token",
+                                "--dry-run",
+                            ],
+                        )
+
+    assert result.exit_code == 0, result.output
+    assert "Dry-run enabled" in result.output
+    save_cursor.assert_not_called()
+
+
+def test_sync_servicenow_non_dry_run_saves_cursor() -> None:
+    from datetime import datetime, timezone
+    from git_review.github_source_sync import SyncReport
+
+    runner = CliRunner()
+    mock_syncer_cls = MagicMock()
+    mock_syncer = mock_syncer_cls.return_value
+    mock_syncer.sync_repo.return_value = (
+        SyncReport(milestones_scanned=1, issues_scanned=1, issues_created=1),
+        datetime(2025, 1, 1, 10, 0, tzinfo=timezone.utc),
+    )
+
+    with patch("git_review.cli.GitHubClient", MagicMock()):
+        with patch("git_review.cli.ServiceNowClient", MagicMock()):
+            with patch("git_review.cli.GitHubSourceOfTruthSync", mock_syncer_cls):
+                with patch("git_review.cli.load_sync_cursor", return_value={}):
+                    with patch("git_review.cli.save_sync_cursor") as save_cursor:
+                        result = runner.invoke(
+                            main,
+                            [
+                                "sync-servicenow",
+                                "--repo", "acme/app",
+                                "--servicenow-url", "https://example.service-now.com",
+                                "--servicenow-token", "token",
+                            ],
+                        )
+
+    assert result.exit_code == 0, result.output
+    assert "Cursor updated" in result.output
+    save_cursor.assert_called_once()

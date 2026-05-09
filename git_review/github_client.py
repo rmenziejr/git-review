@@ -104,6 +104,20 @@ class GitHubClient:
             raise ValueError("GitHub GraphQL response did not include a valid data payload.")
         return data
 
+    def _resolve_owner_node_id(self, owner: str) -> str:
+        """Return GraphQL node id for an organisation or user login."""
+        query = """
+        query($owner: String!) {
+          organization(login: $owner) { id }
+          user(login: $owner) { id }
+        }
+        """
+        data = self._graphql(query, {"owner": owner})
+        owner_node = (data.get("organization") or {}).get("id") or (data.get("user") or {}).get("id")
+        if not owner_node:
+            raise ValueError(f"Could not resolve GitHub owner '{owner}'.")
+        return str(owner_node)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -1268,6 +1282,118 @@ class GitHubClient:
             "status_field": board.get("status_field_name", ""),
             "status": option.get("name", ""),
             "item_id": item.get("item_id"),
+        }
+
+    def list_projects(
+        self,
+        owner: str,
+        *,
+        repo: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """List Projects v2 visible for an owner or specific repository."""
+        if repo:
+            query = """
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+            }
+            """
+            data = self._graphql(query, {"owner": owner, "repo": repo})
+            nodes = (((data.get("repository") or {}).get("projectsV2") or {}).get("nodes") or [])
+        else:
+            query = """
+            query($owner: String!) {
+              organization(login: $owner) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+              user(login: $owner) {
+                projectsV2(first: 100) {
+                  nodes {
+                    id
+                    number
+                    title
+                    shortDescription
+                    url
+                    closed
+                    updatedAt
+                  }
+                }
+              }
+            }
+            """
+            data = self._graphql(query, {"owner": owner})
+            root = data.get("organization") or data.get("user") or {}
+            nodes = ((root.get("projectsV2") or {}).get("nodes") or [])
+
+        projects: list[dict[str, Any]] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            projects.append(
+                {
+                    "id": node.get("id", ""),
+                    "number": int(node.get("number", 0) or 0),
+                    "title": node.get("title", ""),
+                    "description": node.get("shortDescription", "") or "",
+                    "url": node.get("url", ""),
+                    "closed": bool(node.get("closed", False)),
+                    "updated_at": node.get("updatedAt", "") or "",
+                }
+            )
+        projects.sort(key=lambda item: item["number"])
+        return projects
+
+    def create_project(
+        self,
+        owner: str,
+        title: str,
+    ) -> dict[str, Any]:
+        """Create a new Projects v2 board under an org/user owner."""
+        owner_id = self._resolve_owner_node_id(owner)
+        mutation = """
+        mutation($ownerId: ID!, $title: String!) {
+          createProjectV2(input: { ownerId: $ownerId, title: $title }) {
+            projectV2 {
+              id
+              number
+              title
+              url
+              closed
+            }
+          }
+        }
+        """
+        data = self._graphql(mutation, {"ownerId": owner_id, "title": title})
+        project = ((data.get("createProjectV2") or {}).get("projectV2") or {})
+        if not project:
+            raise ValueError("GitHub did not return the created project.")
+        return {
+            "id": project.get("id", ""),
+            "number": int(project.get("number", 0) or 0),
+            "title": project.get("title", ""),
+            "url": project.get("url", ""),
+            "closed": bool(project.get("closed", False)),
         }
 
 

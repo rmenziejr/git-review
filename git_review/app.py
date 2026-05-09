@@ -907,6 +907,120 @@ def _update_agile_project_status(
     )
 
 
+def _list_owner_repositories(
+    github_token: str,
+    owner_input: str,
+) -> tuple[str, str]:
+    owner = (owner_input or "").strip()
+    if not owner:
+        return "_No repositories found._", "❌  Owner is required."
+    owner = owner.split("/", 1)[0].replace("*", "").strip()
+    if not owner:
+        return "_No repositories found._", "❌  Owner is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        repos = gh.list_repos(owner)
+    except Exception as exc:
+        return "_No repositories found._", f"❌  Error listing repositories: {exc}"
+    if not repos:
+        return "_No repositories found._", f"ℹ️  No non-archived repositories found for '{owner}'."
+
+    return "\n".join([f"- {owner}/{repo_name}" for repo_name in repos]), (
+        f"✅  Found {len(repos)} repository(ies) for '{owner}'."
+    )
+
+
+def _list_projects(
+    github_token: str,
+    target: str,
+) -> tuple[str, str]:
+    raw = (target or "").strip()
+    if not raw:
+        return "_No projects found._", "❌  Enter an owner or owner/repo."
+
+    owner = raw.split("/", 1)[0].replace("*", "").strip()
+    repo_name: Optional[str] = None
+    if "/" in raw and not raw.endswith("/*"):
+        _, repo_part = raw.split("/", 1)
+        if repo_part and repo_part != "*":
+            repo_name = repo_part.strip()
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        projects = gh.list_projects(owner=owner, repo=repo_name)
+    except Exception as exc:
+        return "_No projects found._", f"❌  Error listing projects: {exc}"
+    if not projects:
+        scope = f"{owner}/{repo_name}" if repo_name else owner
+        return "_No projects found._", f"ℹ️  No projects found for {scope}."
+
+    lines = [
+        "| Project # | Title | State | URL |",
+        "|----------:|-------|-------|-----|",
+    ]
+    for project in projects:
+        state = "closed" if project.get("closed") else "open"
+        lines.append(
+            f"| {project.get('number')} | {project.get('title', '')} | {state} | {project.get('url', '')} |"
+        )
+    scope = f"{owner}/{repo_name}" if repo_name else owner
+    return "\n".join(lines), f"✅  Found {len(projects)} project(s) for {scope}."
+
+
+def _create_project(
+    github_token: str,
+    owner_input: str,
+    title: str,
+) -> str:
+    owner = (owner_input or "").strip()
+    if not owner:
+        return "❌  Owner is required."
+    owner = owner.split("/", 1)[0].replace("*", "").strip()
+    if not owner:
+        return "❌  Owner is required."
+    title_value = (title or "").strip()
+    if not title_value:
+        return "❌  Project title is required."
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        project = gh.create_project(owner, title_value)
+    except Exception as exc:
+        return f"❌  Error creating project: {exc}"
+    return (
+        f"✅  Created project #{project.get('number')} '{project.get('title')}' for {owner}.\n"
+        f"{project.get('url', '')}"
+    )
+
+
+def _list_open_issues(
+    github_token: str,
+    repo: str,
+) -> tuple[str, str]:
+    if not repo or "/" not in repo:
+        return "_No issues found._", "❌  Please enter the repository in 'owner/repo' format."
+    owner, repo_name = repo.strip().split("/", 1)
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        issues = gh.get_open_issues(owner, repo_name)
+    except Exception as exc:
+        return "_No issues found._", f"❌  Error listing open issues: {exc}"
+    if not issues:
+        return "_No issues found._", f"ℹ️  No open issues found in {owner}/{repo_name}."
+
+    lines = [
+        "| Issue | Title | Labels | Assignees |",
+        "|------:|-------|--------|-----------|",
+    ]
+    for issue in issues:
+        labels = ", ".join(issue.labels) if issue.labels else "—"
+        assignees = ", ".join(issue.assignees) if issue.assignees else "—"
+        lines.append(f"| #{issue.number} | {issue.title} | {labels} | {assignees} |")
+    return "\n".join(lines), f"✅  Found {len(issues)} open issue(s) in {owner}/{repo_name}."
+
+
 # ---------------------------------------------------------------------------
 # Build the Gradio UI
 # ---------------------------------------------------------------------------
@@ -1239,6 +1353,10 @@ def build_app() -> gr.Blocks:
                     label="Milestone # Override (optional — overrides per-row milestone)",
                     placeholder="1",
                 )
+                with gr.Row():
+                    submit_open_issues_btn = gr.Button("List Open Issues", variant="secondary")
+                    submit_open_issues_status = gr.Textbox(label="Open Issues Status", interactive=False)
+                submit_open_issues_output = gr.Markdown(label="Open Issues")
 
                 gr.Markdown("### Issue Drafts (editable)")
                 submit_table = gr.Dataframe(
@@ -1266,6 +1384,11 @@ def build_app() -> gr.Blocks:
                     fn=_submit_issues,
                     inputs=[github_token, submit_repo, submit_milestone, submit_table],
                     outputs=submit_output,
+                )
+                submit_open_issues_btn.click(
+                    fn=_list_open_issues,
+                    inputs=[github_token, submit_repo],
+                    outputs=[submit_open_issues_output, submit_open_issues_status],
                 )
 
             # ── Tab 6: Agile Planner ──────────────────────────────────
@@ -1325,6 +1448,27 @@ def build_app() -> gr.Blocks:
                         "Apply Priority Labels", variant="secondary"
                     )
                 agile_apply_status = gr.Textbox(label="Apply Status", interactive=False)
+                gr.Markdown("---")
+                gr.Markdown("### Repository and Project Context")
+                with gr.Row():
+                    agile_list_repos_btn = gr.Button("List Owner Repositories", variant="secondary")
+                    agile_list_projects_btn = gr.Button("List Projects", variant="secondary")
+                with gr.Row():
+                    agile_new_project_title = gr.Textbox(
+                        label="New project title (optional)",
+                        placeholder="Sprint Board",
+                    )
+                    agile_create_project_btn = gr.Button("Create Project", variant="secondary")
+                with gr.Row():
+                    agile_context_status = gr.Textbox(label="Context Status", interactive=False)
+                with gr.Row():
+                    agile_repos_output = gr.Markdown(label="Repositories")
+                    agile_projects_output = gr.Markdown(label="Projects")
+                gr.Markdown("### Open Issues")
+                with gr.Row():
+                    agile_list_open_issues_btn = gr.Button("List Open Issues for Repo", variant="secondary")
+                    agile_open_issues_status = gr.Textbox(label="Open Issues Status", interactive=False)
+                agile_open_issues_output = gr.Markdown(label="Open Issues")
                 gr.Markdown("---")
                 gr.Markdown("### Project Status Board")
                 gr.Markdown(
@@ -1395,6 +1539,30 @@ def build_app() -> gr.Blocks:
                     fn=_apply_agile_labels,
                     inputs=[github_token, agile_repo, agile_all_repos, _agile_result_state],
                     outputs=agile_apply_status,
+                )
+
+                agile_list_repos_btn.click(
+                    fn=_list_owner_repositories,
+                    inputs=[github_token, agile_repo],
+                    outputs=[agile_repos_output, agile_context_status],
+                )
+
+                agile_list_projects_btn.click(
+                    fn=_list_projects,
+                    inputs=[github_token, agile_repo],
+                    outputs=[agile_projects_output, agile_context_status],
+                )
+
+                agile_create_project_btn.click(
+                    fn=_create_project,
+                    inputs=[github_token, agile_repo, agile_new_project_title],
+                    outputs=agile_context_status,
+                )
+
+                agile_list_open_issues_btn.click(
+                    fn=_list_open_issues,
+                    inputs=[github_token, agile_repo],
+                    outputs=[agile_open_issues_output, agile_open_issues_status],
                 )
 
                 agile_project_read_btn.click(

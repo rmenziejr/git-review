@@ -226,6 +226,23 @@ async def list_repos(
 
 
 @function_tool(needs_approval=False)
+async def list_projects(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str = "",
+) -> str:
+    """List Projects v2 for an owner, or for a specific repository.
+
+    Args:
+        owner: GitHub username or organisation name.
+        repo: Optional repository name to scope project listing.
+    """
+    gh = _make_gh(ctx.context)
+    projects = gh.list_projects(owner=owner, repo=repo.strip() or None)
+    return json.dumps(projects)
+
+
+@function_tool(needs_approval=False)
 async def search_issues(
     ctx: RunContextWrapper[AgentContext],
     owner: str,
@@ -455,6 +472,23 @@ async def update_project_status(
     return json.dumps(updated)
 
 
+@function_tool(needs_approval=True)
+async def create_project(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    title: str,
+) -> str:
+    """Create a GitHub Projects v2 project after human approval.
+
+    Args:
+        owner: Project owner (org or user).
+        title: Project title.
+    """
+    gh = _make_gh(ctx.context)
+    project = gh.create_project(owner=owner, title=title)
+    return json.dumps(project)
+
+
 # ---------------------------------------------------------------------------
 # ServiceNow tools (enabled via settings/context)
 # ---------------------------------------------------------------------------
@@ -670,12 +704,14 @@ async def ready_pr_for_review(
 
 ALL_TOOLS = [
     list_repos,
+    list_projects,
     search_issues,
     get_issue,
     list_pull_requests,
     create_issue_draft,
     agile_plan,
     read_project_status_board,
+    create_project,
     push_issue_draft,
     update_issue,
     create_draft_pr,

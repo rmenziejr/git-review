@@ -1328,3 +1328,112 @@ def test_update_project_item_status_calls_graphql_mutation() -> None:
     assert updated["issue_number"] == 1
     assert updated["status"] == "In Progress"
     assert len(responses_lib.calls) == 2
+
+
+@responses_lib.activate
+def test_list_projects_for_owner_returns_projects() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {
+                    "projectsV2": {
+                        "nodes": [
+                            {
+                                "id": "P1",
+                                "number": 1,
+                                "title": "Roadmap",
+                                "shortDescription": "Main roadmap",
+                                "url": "https://github.com/orgs/acme/projects/1",
+                                "closed": False,
+                                "updatedAt": "2026-05-09T12:00:00Z",
+                            }
+                        ]
+                    }
+                },
+                "user": None,
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    projects = client.list_projects("acme")
+
+    assert len(projects) == 1
+    assert projects[0]["number"] == 1
+    assert projects[0]["title"] == "Roadmap"
+    assert projects[0]["closed"] is False
+
+
+@responses_lib.activate
+def test_list_projects_for_repo_returns_projects() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "repository": {
+                    "projectsV2": {
+                        "nodes": [
+                            {
+                                "id": "P2",
+                                "number": 2,
+                                "title": "Sprint Board",
+                                "shortDescription": "",
+                                "url": "https://github.com/orgs/acme/projects/2",
+                                "closed": True,
+                                "updatedAt": "2026-05-09T12:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    projects = client.list_projects("acme", repo="app")
+
+    assert len(projects) == 1
+    assert projects[0]["number"] == 2
+    assert projects[0]["closed"] is True
+
+
+@responses_lib.activate
+def test_create_project_creates_project_v2() -> None:
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "organization": {"id": "ORG_123"},
+                "user": None,
+            }
+        },
+        status=200,
+    )
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/graphql",
+        json={
+            "data": {
+                "createProjectV2": {
+                    "projectV2": {
+                        "id": "PVT_1",
+                        "number": 9,
+                        "title": "Sprint Board",
+                        "url": "https://github.com/orgs/acme/projects/9",
+                        "closed": False,
+                    }
+                }
+            }
+        },
+        status=200,
+    )
+    client = GitHubClient()
+    project = client.create_project("acme", "Sprint Board")
+
+    assert project["number"] == 9
+    assert project["title"] == "Sprint Board"
+    assert len(responses_lib.calls) == 2

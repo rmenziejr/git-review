@@ -773,8 +773,19 @@ def _requirements_page() -> rx.Component:
                     width="100%",
                 ),
             ),
-            rx.button("Submit issues", on_click=AppState.submit_requirement_drafts, color_scheme="indigo"),
+            rx.hstack(
+                rx.button("Submit issues", on_click=AppState.submit_requirement_drafts, color_scheme="indigo"),
+                rx.button(
+                    "List open issues",
+                    on_click=AppState.list_submit_open_issues_workflow,
+                    variant="soft",
+                    color_scheme="gray",
+                ),
+                spacing="3",
+            ),
             _status_block("Submit status", AppState.submit_status),
+            _status_block("Open issues status", AppState.submit_open_issues_status),
+            _markdown_block("Open issues", AppState.submit_open_issues_markdown),
         ),
     )
 
@@ -942,6 +953,52 @@ def _agile_page() -> rx.Component:
             ),
             _status_block("Project board status", AppState.agile_project_board_status),
         ),
+        _section_card(
+            "Repo and project context",
+            "List repos and projects, create a project board if needed, and review open issues for sprint execution.",
+            rx.hstack(
+                rx.button(
+                    "List owner repositories",
+                    on_click=AppState.list_agile_repositories_workflow,
+                    variant="soft",
+                ),
+                rx.button(
+                    "List projects",
+                    on_click=AppState.list_agile_projects_workflow,
+                    variant="soft",
+                ),
+                spacing="3",
+            ),
+            rx.hstack(
+                _labeled_field(
+                    "New project title",
+                    rx.input(
+                        value=AppState.agile_new_project_title,
+                        on_change=lambda value: AppState.set_workflow_field("agile_new_project_title", value),
+                        placeholder="Sprint Board",
+                        width="100%",
+                    ),
+                ),
+                rx.button(
+                    "Create project",
+                    on_click=AppState.create_agile_project_workflow,
+                    color_scheme="indigo",
+                    variant="soft",
+                ),
+                width="100%",
+                align_items="end",
+            ),
+            rx.button(
+                "List open issues for repo",
+                on_click=AppState.list_agile_open_issues_workflow,
+                variant="soft",
+            ),
+            _status_block("Context status", AppState.agile_context_status),
+            _status_block("Open issues status", AppState.agile_open_issues_status),
+        ),
+        _markdown_block("Repositories", AppState.agile_repos_markdown),
+        _markdown_block("Projects", AppState.agile_projects_markdown),
+        _markdown_block("Open issues", AppState.agile_open_issues_markdown),
         _markdown_block("Dependency graph", AppState.agile_dependencies_markdown),
         _markdown_block("Sprint plan", AppState.agile_plan_markdown),
         _markdown_block("Project board", AppState.agile_project_board_markdown),

@@ -27,6 +27,7 @@ from git_review.agent_tools import (
     create_issue_draft,
     get_tools_for_context,
     get_issue,
+    list_projects,
     list_pull_requests,
     list_repos,
     preview_servicenow_sync,
@@ -34,6 +35,7 @@ from git_review.agent_tools import (
     read_project_status_board,
     ready_pr_for_review,
     search_issues,
+    create_project,
     update_project_status,
     update_issue,
     update_pull_request,
@@ -162,11 +164,13 @@ WRITE_TOOLS = [
     create_draft_pr,
     update_pull_request,
     ready_pr_for_review,
+    create_project,
     update_project_status,
 ]
 
 READ_TOOLS = [
     list_repos,
+    list_projects,
     search_issues,
     get_issue,
     list_pull_requests,
@@ -197,12 +201,14 @@ def test_all_tools_list_complete() -> None:
     all_names = {t.name for t in ALL_TOOLS}
     expected = {
         "list_repos",
+        "list_projects",
         "search_issues",
         "get_issue",
         "list_pull_requests",
         "create_issue_draft",
         "agile_plan",
         "read_project_status_board",
+        "create_project",
         "push_issue_draft",
         "update_issue",
         "create_draft_pr",
@@ -263,6 +269,22 @@ async def test_search_issues_returns_json() -> None:
     assert issues[0]["number"] == 1
     assert issues[0]["title"] == "Bug: crash"
     assert issues[1]["labels"] == ["bug"]
+
+
+@pytest.mark.asyncio
+async def test_list_projects_returns_json() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = '{"owner": "myorg", "repo": "myrepo"}'
+    tc = _make_tool_ctx(agent_ctx, "list_projects", args)
+    mock_gh = MagicMock()
+    mock_gh.list_projects.return_value = [{"number": 1, "title": "Board"}]
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await list_projects.on_invoke_tool(tc, args)
+
+    payload = json.loads(result)
+    assert payload[0]["number"] == 1
+    mock_gh.list_projects.assert_called_once_with(owner="myorg", repo="myrepo")
 
 
 @pytest.mark.asyncio
@@ -602,6 +624,25 @@ async def test_update_project_status_calls_client() -> None:
         repo="myorg/myrepo",
         status_field_name="Status",
     )
+
+
+@pytest.mark.asyncio
+async def test_create_project_calls_client() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = json.dumps({
+        "owner": "myorg",
+        "title": "Sprint Board",
+    })
+    tc = _make_tool_ctx(agent_ctx, "create_project", args)
+    mock_gh = MagicMock()
+    mock_gh.create_project.return_value = {"number": 3, "title": "Sprint Board"}
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await create_project.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["number"] == 3
+    mock_gh.create_project.assert_called_once_with(owner="myorg", title="Sprint Board")
 
 
 @pytest.mark.asyncio

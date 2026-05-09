@@ -79,6 +79,32 @@
           "minimum": 1,
           "markdownDescription": "Number of days to look back when running **Review Repository** without an explicit date range.",
           "order": 8
+        },
+        "gitReview.defaultBranch": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Branch to fetch commits from for **Review Repository**. Leave blank to use the repository's default branch. Use `*` to fetch from all branches (deduplicated by SHA). Passed as `--branch`.",
+          "order": 9
+        },
+        "gitReview.enableThinking": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable extended reasoning (thinking mode) for **Generate Commit Message**. Passed as `--think`.",
+          "order": 10
+        },
+        "gitReview.sprintCapacity": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "markdownDescription": "Maximum number of issues per sprint for **Agile Plan**. Passed as `--sprint-capacity`.",
+          "order": 11
+        },
+        "gitReview.sprints": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "markdownDescription": "Number of future sprints to plan for **Agile Plan**. Passed as `--sprints`.",
+          "order": 12
         }
       }
     },
@@ -97,6 +123,16 @@
         "command": "gitReview.createIssues",
         "title": "Create Issues from Requirements",
         "category": "Git Review"
+      },
+      {
+        "command": "gitReview.createMilestone",
+        "title": "Create Milestone",
+        "category": "Git Review"
+      },
+      {
+        "command": "gitReview.agile",
+        "title": "Agile Plan",
+        "category": "Git Review"
       }
     ],
     "menus": {
@@ -109,6 +145,12 @@
         },
         {
           "command": "gitReview.createIssues"
+        },
+        {
+          "command": "gitReview.createMilestone"
+        },
+        {
+          "command": "gitReview.agile"
         }
       ]
     }

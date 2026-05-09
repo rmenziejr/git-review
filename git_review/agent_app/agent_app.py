@@ -2,11 +2,11 @@
 
 Launch
 ------
-::
+Run the installed entry point::
 
     git-review-agent
 
-or directly from ``git_review/agent_app/``::
+Or run Reflex directly from ``git_review/agent_app/``::
 
     reflex run
 

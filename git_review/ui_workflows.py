@@ -333,7 +333,7 @@ def sync_servicenow(
             (cursor_path or "").strip() or ".git-review-sync-cursor.json"
         )
         cwd = os.path.realpath(os.getcwd())
-        if not cursor_file.startswith(cwd + os.sep):
+        if os.path.commonpath([cwd, cursor_file]) != cwd:
             return "❌  Cursor file path must be inside the current working directory."
         cursor_data = load_sync_cursor(cursor_file)
         since = get_repo_cursor(cursor_data, repo_key)
@@ -566,11 +566,13 @@ def run_agile_planner(
     plan_md = "\n".join(plan_lines) if plan_lines else "_No sprint plan generated._"
 
     pr_label = "PR" if len(result.pull_requests) == 1 else "PRs"
+    dependency_label = "dependency" if len(result.dependencies) == 1 else "dependencies"
+    sprint_label = "sprint" if len(result.sprints) == 1 else "sprints"
     status = (
         f"✅  Plan generated: {len(result.issues)} issues, "
         f"{len(result.pull_requests)} {pr_label}, "
-        f"{len(result.dependencies)} dependencies, "
-        f"{len(result.sprints)} sprints."
+        f"{len(result.dependencies)} {dependency_label}, "
+        f"{len(result.sprints)} {sprint_label}."
     )
     return deps_md, plan_md, status
 

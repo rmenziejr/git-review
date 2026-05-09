@@ -147,7 +147,7 @@ def test_run_agile_planner_formats_dependency_and_plan_markdown() -> None:
     assert "### Sprint 1: Foundation" in plan_md
     assert "- #1 Add dashboard" in plan_md
     assert "Focus on foundational work first." in plan_md
-    assert "Plan generated: 2 issues, 1 PRs, 1 dependencies, 1 sprints." in status
+    assert "Plan generated: 2 issues, 1 PR, 1 dependencies, 1 sprints." in status
 
 
 def test_agent_app_imports_with_multi_page_shell() -> None:

@@ -314,6 +314,9 @@ class AppState(rx.State):
             self.submit_repo = self.requirements_repo.strip()
 
     def update_requirement_draft(self, value: str, idx: int, field_name: str) -> None:
+        allowed_fields = {"title", "body", "labels", "assignees", "milestone"}
+        if field_name not in allowed_fields:
+            return
         drafts = list(self.requirement_drafts)
         if 0 <= idx < len(drafts):
             updated = drafts[idx].model_copy()

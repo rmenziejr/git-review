@@ -1,4 +1,20 @@
-"""Reflex web application for the git-review agent and workflow pages."""
+"""Reflex web application for git-review.
+
+Launch
+------
+::
+
+    git-review-agent
+
+or, from ``git_review/agent_app/``::
+
+    reflex run
+
+The app combines the conversational agent with dedicated workflow pages for
+activity summaries, milestones, requirements, ServiceNow sync, and agile
+planning. Credentials and defaults come from ``.env`` / environment variables
+handled by :class:`git_review.config.AppSettings`.
+"""
 
 from __future__ import annotations
 

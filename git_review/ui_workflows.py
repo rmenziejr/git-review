@@ -536,8 +536,9 @@ def run_agile_planner(
             ]
         )
         for dep in result.dependencies:
+            dep_source = dep.source or "llm"
             deps_lines.append(
-                f"| #{dep.from_issue} | #{dep.to_issue} | {dep.confidence:.0%} | {dep.source} | {dep.reason} |"
+                f"| #{dep.from_issue} | #{dep.to_issue} | {dep.confidence:.0%} | {dep_source} | {dep.reason} |"
             )
     deps_md = "\n".join(deps_lines) if deps_lines else "_No dependencies identified._"
 
@@ -564,9 +565,10 @@ def run_agile_planner(
         plan_lines.extend(["---", "**Summary**", "", result.summary_text])
     plan_md = "\n".join(plan_lines) if plan_lines else "_No sprint plan generated._"
 
+    pr_label = "PR" if len(result.pull_requests) == 1 else "PRs"
     status = (
         f"✅  Plan generated: {len(result.issues)} issues, "
-        f"{len(result.pull_requests)} PRs, "
+        f"{len(result.pull_requests)} {pr_label}, "
         f"{len(result.dependencies)} dependencies, "
         f"{len(result.sprints)} sprints."
     )

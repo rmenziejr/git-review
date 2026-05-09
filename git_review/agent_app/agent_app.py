@@ -23,6 +23,14 @@ OPENAI_BASE_URL
     Custom OpenAI-compatible base URL (optional).
 AGENT_MODEL
     LLM model for the agent (default: gpt-4o).
+SERVICENOW_ENABLED
+    Enable ServiceNow sync tools in the agent (true/false).
+SERVICENOW_URL / SERVICENOW_USER / SERVICENOW_PASSWORD / SERVICENOW_TOKEN
+    ServiceNow connection settings used when ServiceNow integration is enabled.
+SERVICENOW_MILESTONE_TABLE / SERVICENOW_ISSUE_TABLE
+    ServiceNow table names for milestone/issue sync records.
+SERVICENOW_CURSOR_PATH
+    Local path for incremental sync cursor state.
 """
 
 from __future__ import annotations

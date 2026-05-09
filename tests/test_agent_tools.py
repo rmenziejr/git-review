@@ -20,12 +20,16 @@ from agents.tool_context import ToolContext
 from git_review.agent_tools import (
     AgentContext,
     ALL_TOOLS,
+    SERVICENOW_TOOLS,
     agile_plan,
+    apply_servicenow_sync,
     create_draft_pr,
     create_issue_draft,
+    get_tools_for_context,
     get_issue,
     list_pull_requests,
     list_repos,
+    preview_servicenow_sync,
     push_issue_draft,
     ready_pr_for_review,
     search_issues,
@@ -128,6 +132,21 @@ def test_agent_context_defaults() -> None:
     )
     assert ctx.openai_base_url == ""
     assert ctx.model == "gpt-4o"
+    assert ctx.servicenow_enabled is False
+    assert ctx.servicenow_url == ""
+
+
+def test_get_tools_for_context_excludes_servicenow_by_default() -> None:
+    ctx = _make_agent_ctx()
+    names = {tool.name for tool in get_tools_for_context(ctx)}
+    assert names == {t.name for t in ALL_TOOLS}
+
+
+def test_get_tools_for_context_includes_servicenow_when_enabled() -> None:
+    ctx = _make_agent_ctx()
+    ctx.servicenow_enabled = True
+    names = {tool.name for tool in get_tools_for_context(ctx)}
+    assert names == ({t.name for t in ALL_TOOLS} | {t.name for t in SERVICENOW_TOOLS})
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +205,11 @@ def test_all_tools_list_complete() -> None:
         "ready_pr_for_review",
     }
     assert all_names == expected
+
+
+def test_servicenow_tools_approval_flags() -> None:
+    assert preview_servicenow_sync.needs_approval is False
+    assert apply_servicenow_sync.needs_approval is True
 
 
 # ---------------------------------------------------------------------------
@@ -515,3 +539,18 @@ async def test_ready_pr_for_review_sets_draft_false() -> None:
         "myorg", "myrepo", 15, draft=False
     )
 
+
+@pytest.mark.asyncio
+async def test_preview_servicenow_sync_rejects_cursor_outside_cwd() -> None:
+    agent_ctx = _make_agent_ctx()
+    agent_ctx.servicenow_enabled = True
+    agent_ctx.servicenow_url = "https://example.service-now.com"
+    agent_ctx.servicenow_token = "sn-token"
+    agent_ctx.servicenow_cursor_path = "../outside.json"
+    args = '{"allow_back_sync_fields": ""}'
+    tc = _make_tool_ctx(agent_ctx, "preview_servicenow_sync", args)
+
+    result = await preview_servicenow_sync.on_invoke_tool(tc, args)
+
+    payload = json.loads(result)
+    assert "Cursor file path must be within current working directory." in payload["error"]

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -43,6 +44,14 @@ except ImportError as _exc:  # pragma: no cover
 
 from .agile_planner import AgilePlanner
 from .github_client import GitHubClient
+from .github_source_sync import (
+    GitHubSourceOfTruthSync,
+    ServiceNowClient,
+    get_repo_cursor,
+    load_sync_cursor,
+    save_sync_cursor,
+    set_repo_cursor,
+)
 from .issue_factory import IssueDraft, IssueFactory
 
 if TYPE_CHECKING:
@@ -66,6 +75,14 @@ class AgentContext:
     openai_api_key: str
     openai_base_url: str = ""
     model: str = "gpt-4o"
+    servicenow_enabled: bool = False
+    servicenow_url: str = ""
+    servicenow_user: str = ""
+    servicenow_password: str = ""
+    servicenow_token: str = ""
+    servicenow_milestone_table: str = "u_github_milestone"
+    servicenow_issue_table: str = "u_github_issue"
+    servicenow_cursor_path: str = ".git-review-sync-cursor.json"
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +112,87 @@ def _draft_to_dict(draft: IssueDraft) -> dict:
         "assignees": draft.assignees,
         "milestone": draft.milestone,
     }
+
+
+def _parse_back_sync_fields(raw_csv: str) -> tuple[str, ...]:
+    allowed = {"labels", "assignees"}
+    requested = {x.strip().lower() for x in (raw_csv or "").split(",") if x.strip()}
+    return tuple(sorted(requested & allowed))
+
+
+def _sync_servicenow_for_context(
+    ctx: AgentContext,
+    *,
+    dry_run: bool,
+    allow_back_sync_fields: tuple[str, ...],
+) -> str:
+    if not ctx.servicenow_enabled:
+        return json.dumps({"error": "ServiceNow integration is disabled in settings."})
+    if not ctx.servicenow_url.strip():
+        return json.dumps({"error": "ServiceNow URL is required when integration is enabled."})
+    if not (ctx.servicenow_token.strip() or (ctx.servicenow_user.strip() and ctx.servicenow_password.strip())):
+        return json.dumps({"error": "ServiceNow auth required: token or username/password."})
+    if not ctx.owner.strip() or not ctx.repo.strip():
+        return json.dumps({"error": "owner and repo are required in agent context."})
+
+    gh = _make_gh(ctx)
+    snow = ServiceNowClient(
+        ctx.servicenow_url,
+        user=ctx.servicenow_user or None,
+        password=ctx.servicenow_password or None,
+        token=ctx.servicenow_token or None,
+    )
+    syncer = GitHubSourceOfTruthSync(
+        gh,
+        snow,
+        milestone_table=ctx.servicenow_milestone_table,
+        issue_table=ctx.servicenow_issue_table,
+    )
+
+    repo_key = f"{ctx.owner}/{ctx.repo}"
+    cursor_file = os.path.realpath(ctx.servicenow_cursor_path or ".git-review-sync-cursor.json")
+    cwd = os.path.realpath(os.getcwd())
+    if not cursor_file.startswith(cwd + os.sep):
+        return json.dumps({"error": "Cursor file path must be within current working directory."})
+    cursor_data = load_sync_cursor(cursor_file)
+    since = get_repo_cursor(cursor_data, repo_key)
+    report, next_cursor = syncer.sync_repo(
+        ctx.owner,
+        ctx.repo,
+        since=since,
+        dry_run=dry_run,
+        allow_back_sync_fields=allow_back_sync_fields,
+    )
+
+    if not dry_run:
+        set_repo_cursor(cursor_data, repo_key, next_cursor)
+        save_sync_cursor(cursor_file, cursor_data)
+
+    return json.dumps(
+        {
+            "repo": repo_key,
+            "dry_run": dry_run,
+            "since": since.isoformat() if since is not None else "",
+            "next_cursor": next_cursor.isoformat(),
+            "milestones_scanned": report.milestones_scanned,
+            "milestones_created": report.milestones_created,
+            "milestones_updated": report.milestones_updated,
+            "issues_scanned": report.issues_scanned,
+            "issues_created": report.issues_created,
+            "issues_updated": report.issues_updated,
+            "back_sync_updates": report.back_sync_updates,
+            "conflicts": [
+                {
+                    "entity": c.entity,
+                    "github_key": c.github_key,
+                    "field": c.field,
+                    "github_value": c.github_value,
+                    "servicenow_value": c.servicenow_value,
+                }
+                for c in report.conflicts
+            ],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +384,47 @@ async def agile_plan(
 
 
 # ---------------------------------------------------------------------------
+# ServiceNow tools (enabled via settings/context)
+# ---------------------------------------------------------------------------
+
+
+@function_tool(needs_approval=False)
+async def preview_servicenow_sync(
+    ctx: RunContextWrapper[AgentContext],
+    allow_back_sync_fields: str = "",
+) -> str:
+    """Preview GitHub → ServiceNow sync without writes (no cursor advance).
+
+    Args:
+        allow_back_sync_fields: Optional comma-separated metadata back-sync allowlist
+            ('labels', 'assignees').
+    """
+    return _sync_servicenow_for_context(
+        ctx.context,
+        dry_run=True,
+        allow_back_sync_fields=_parse_back_sync_fields(allow_back_sync_fields),
+    )
+
+
+@function_tool(needs_approval=True)
+async def apply_servicenow_sync(
+    ctx: RunContextWrapper[AgentContext],
+    allow_back_sync_fields: str = "",
+) -> str:
+    """Apply GitHub → ServiceNow sync and advance cursor.
+
+    Args:
+        allow_back_sync_fields: Optional comma-separated metadata back-sync allowlist
+            ('labels', 'assignees').
+    """
+    return _sync_servicenow_for_context(
+        ctx.context,
+        dry_run=False,
+        allow_back_sync_fields=_parse_back_sync_fields(allow_back_sync_fields),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Write tools (needs_approval=True) – paused for HITL before execution
 # ---------------------------------------------------------------------------
 
@@ -470,3 +609,16 @@ ALL_TOOLS = [
     update_pull_request,
     ready_pr_for_review,
 ]
+
+SERVICENOW_TOOLS = [
+    preview_servicenow_sync,
+    apply_servicenow_sync,
+]
+
+
+def get_tools_for_context(ctx: AgentContext) -> list:
+    """Return tool list, adding ServiceNow tools only when enabled."""
+    tools = list(ALL_TOOLS)
+    if ctx.servicenow_enabled:
+        tools.extend(SERVICENOW_TOOLS)
+    return tools

@@ -41,6 +41,7 @@ directly inside your editor.
 | **Commit message generator** | Write a Conventional Commit message from your staged diff |
 | **Issue generator** | Parse a markdown requirements file and create GitHub issues via LLM |
 | **Milestone management** | Create and list GitHub milestones from the CLI or web app |
+| **ServiceNow sync (GitHub source of truth)** | Incrementally sync GitHub milestones/issues into ServiceNow with cursor tracking, dry-run previews, and conflict reporting |
 | **Agile planner** | Fetch all open issues/PRs, detect blocking dependencies, and generate a prioritised sprint plan via LLM |
 | **Native dependency API** | Write inferred blocking/blocked-by relationships back to GitHub using the native issue-dependencies REST API |
 | **Custom prompts** | Override the LLM system prompt with a Jinja2 template via `--prompt-file` |
@@ -238,6 +239,59 @@ git-review create-issues --repo owner/repo --requirements requirements.md \
   --token ghp_xxx --openai-key sk-xxx --prompt-file my_prompt.j2
 ```
 
+### Sync GitHub milestones/issues to ServiceNow (GitHub as source of truth)
+
+```bash
+# Dry-run first (recommended): preview creates/updates/conflicts only
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-user my_user --servicenow-password my_pass \
+  --dry-run
+
+# Apply sync and advance cursor (incremental after first run)
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-token sn_token_value
+
+# Optional metadata back-sync (off by default)
+git-review sync-servicenow --repo owner/repo \
+  --token ghp_xxx \
+  --servicenow-url https://example.service-now.com \
+  --servicenow-token sn_token_value \
+  --allow-back-sync-field labels --allow-back-sync-field assignees
+```
+
+Field mapping used by `sync-servicenow`:
+
+| GitHub entity | GitHub field | ServiceNow field |
+|---|---|---|
+| Milestone | `repo` | `u_github_repo` |
+| Milestone | `number` | `u_github_milestone_number` |
+| Milestone | `url` | `u_github_milestone_url` |
+| Milestone | `title` | `u_github_milestone_title` |
+| Milestone | `state` | `u_github_state` |
+| Milestone | `due_on` | `u_github_due_on` |
+| Milestone | `updated_at` | `u_github_updated_at` |
+| Issue | `repo` | `u_github_repo` |
+| Issue | `number` | `u_github_issue_number` |
+| Issue | `id` | `u_github_issue_id` |
+| Issue | `url` | `u_github_issue_url` |
+| Issue | `title` | `u_github_title` |
+| Issue | `body` | `u_github_body` |
+| Issue | `state` | `u_github_state` |
+| Issue | `labels` | `u_github_labels` |
+| Issue | `assignees` | `u_github_assignees` |
+| Issue | `milestone.title` | `u_github_milestone_title` |
+| Issue | `updated_at` | `u_github_updated_at` |
+
+Notes:
+- Default flow is one-way **GitHub → ServiceNow**.
+- GitHub IDs and URLs are always persisted in ServiceNow for stable mapping.
+- `--dry-run` prints conflicts so mismatches can be reviewed before apply.
+- Sync is incremental using a per-repo cursor file (`.git-review-sync-cursor.json` by default).
+
 ### Agile sprint planning
 
 ```bash
@@ -316,6 +370,7 @@ browser to access the UI.
 |---|---|
 | **📊 Summarize Activity** | Fetch GitHub activity (commits, issues, PRs, releases) for a repo and generate an AI summary |
 | **🏁 Milestones** | Create a new milestone or list existing milestones in a repository |
+| **🔄 ServiceNow Sync** | Preview/apply incremental GitHub → ServiceNow milestone/issue sync with cursor tracking |
 | **📄 Parse Requirements** | Upload or fetch a markdown requirements file and generate issue drafts via LLM |
 | **🚀 Submit Issues** | Review, edit, and selectively push the generated issue drafts to GitHub |
 | **🗂️ Agile Planner** | Fetch open issues/PRs, show the dependency graph, generate a sprint plan, and optionally write blocking relationships back to GitHub |
@@ -331,6 +386,13 @@ with two additional variables for the server:
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `GIT_REVIEW_MODEL` | Default LLM model | `gpt-4o-mini` |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL | — |
+| `SERVICENOW_URL` | ServiceNow instance URL (sync tab default) | — |
+| `SERVICENOW_USER` | ServiceNow username (if not using token auth) | — |
+| `SERVICENOW_PASSWORD` | ServiceNow password (if not using token auth) | — |
+| `SERVICENOW_TOKEN` | ServiceNow bearer token | — |
+| `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
+| `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
+| `SERVICENOW_CURSOR_PATH` | Incremental sync cursor file path | `.git-review-sync-cursor.json` |
 | `GRADIO_SERVER_NAME` | Hostname or IP address to bind to | `0.0.0.0` |
 | `GRADIO_SERVER_PORT` | TCP port | `7860` |
 
@@ -370,6 +432,18 @@ environment variables / `.env` entries:
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL (Ollama, Azure, etc.) | — |
 | `AGENT_MODEL` | LLM model used by the agent | `gpt-4o` |
+| `SERVICENOW_ENABLED` | Enable ServiceNow tools in the agent UI (`true`/`false`) | `false` |
+| `SERVICENOW_URL` | ServiceNow instance URL | — |
+| `SERVICENOW_USER` | ServiceNow username (if not using token auth) | — |
+| `SERVICENOW_PASSWORD` | ServiceNow password (if not using token auth) | — |
+| `SERVICENOW_TOKEN` | ServiceNow bearer token | — |
+| `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
+| `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
+| `SERVICENOW_CURSOR_PATH` | Cursor file path for incremental sync | `.git-review-sync-cursor.json` |
+
+When ServiceNow integration is enabled in the settings sidebar, the agent can
+use `preview_servicenow_sync` (dry run) and `apply_servicenow_sync` (write mode,
+with HITL approval) against the configured repository.
 
 ### Streaming UX
 

@@ -3,6 +3,7 @@
 Provides a browser-based UI to:
 - Summarize GitHub repository activity with an AI-generated report.
 - Create GitHub milestones.
+- Sync GitHub milestones/issues to ServiceNow.
 - Upload a markdown requirements document and generate issue drafts via LLM.
 - Review, edit, and selectively submit those drafts as real GitHub issues.
 
@@ -27,6 +28,14 @@ GIT_REVIEW_MODEL
     LLM model (default: gpt-4o-mini).
 OPENAI_BASE_URL
     Custom OpenAI-compatible base URL (optional).
+SERVICENOW_URL
+    ServiceNow instance URL for sync tab defaults.
+SERVICENOW_USER / SERVICENOW_PASSWORD / SERVICENOW_TOKEN
+    ServiceNow authentication defaults for sync tab.
+SERVICENOW_MILESTONE_TABLE / SERVICENOW_ISSUE_TABLE
+    ServiceNow table names for milestone/issue records.
+SERVICENOW_CURSOR_PATH
+    Cursor file path for incremental sync.
 GRADIO_SERVER_NAME
     Hostname or IP address for the Gradio server (default: 0.0.0.0).
 GRADIO_SERVER_PORT
@@ -61,6 +70,14 @@ if not hasattr(gr, "Blocks"):  # pragma: no cover
 
 from .config import AppSettings
 from .github_client import GitHubClient
+from .github_source_sync import (
+    GitHubSourceOfTruthSync,
+    ServiceNowClient,
+    get_repo_cursor,
+    load_sync_cursor,
+    save_sync_cursor,
+    set_repo_cursor,
+)
 from .issue_factory import IssueDraft, IssueFactory
 from .llm_client import LLMClient
 from .models import ReviewSummary
@@ -346,6 +363,100 @@ def _list_milestones(github_token: str, repo: str, state: str) -> str:
             f"  #{m.number}  {m.title}  (state={m.state}, due={due}, "
             f"open={m.open_issues}, closed={m.closed_issues})"
         )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tab: ServiceNow Sync
+# ---------------------------------------------------------------------------
+
+def _sync_servicenow(
+    github_token: str,
+    repo: str,
+    servicenow_url: str,
+    servicenow_user: str,
+    servicenow_password: str,
+    servicenow_token: str,
+    milestone_table: str,
+    issue_table: str,
+    cursor_path: str,
+    dry_run: bool,
+    allow_back_sync_fields: str,
+) -> str:
+    if not repo or "/" not in repo:
+        return "❌  Please enter the repository in 'owner/repo' format."
+    if not servicenow_url.strip():
+        return "❌  ServiceNow URL is required."
+    if not (servicenow_token.strip() or (servicenow_user.strip() and servicenow_password.strip())):
+        return "❌  ServiceNow auth required: token or username/password."
+
+    owner, repo_name = repo.strip().split("/", 1)
+    allowed = {"labels", "assignees"}
+    back_sync_fields = tuple(
+        sorted(
+            {
+                field.strip().lower()
+                for field in (allow_back_sync_fields or "").split(",")
+                if field.strip().lower() in allowed
+            }
+        )
+    )
+
+    gh = GitHubClient(token=github_token or None)
+    try:
+        snow = ServiceNowClient(
+            servicenow_url.strip(),
+            user=servicenow_user.strip() or None,
+            password=servicenow_password or None,
+            token=servicenow_token.strip() or None,
+        )
+        syncer = GitHubSourceOfTruthSync(
+            gh,
+            snow,
+            milestone_table=(milestone_table or "").strip() or "u_github_milestone",
+            issue_table=(issue_table or "").strip() or "u_github_issue",
+        )
+        repo_key = f"{owner}/{repo_name}"
+        cursor_file = os.path.realpath((cursor_path or "").strip() or ".git-review-sync-cursor.json")
+        cwd = os.path.realpath(os.getcwd())
+        if not cursor_file.startswith(cwd + os.sep):
+            return "❌  Cursor file path must be inside the current working directory."
+        cursor_data = load_sync_cursor(cursor_file)
+        since = get_repo_cursor(cursor_data, repo_key)
+        report, next_cursor = syncer.sync_repo(
+            owner,
+            repo_name,
+            since=since,
+            dry_run=bool(dry_run),
+            allow_back_sync_fields=back_sync_fields,
+        )
+        if not dry_run:
+            set_repo_cursor(cursor_data, repo_key, next_cursor)
+            save_sync_cursor(cursor_file, cursor_data)
+    except Exception as exc:
+        return f"❌  Error syncing ServiceNow: {exc}"
+
+    lines = [
+        f"✅  Sync {'previewed' if dry_run else 'applied'} for {owner}/{repo_name}.",
+        f"Milestones: scanned={report.milestones_scanned}, created={report.milestones_created}, updated={report.milestones_updated}",
+        f"Issues: scanned={report.issues_scanned}, created={report.issues_created}, updated={report.issues_updated}",
+        f"Back-sync updates: {report.back_sync_updates}",
+        f"Conflicts: {len(report.conflicts)}",
+        f"Next cursor: {next_cursor.isoformat()}",
+    ]
+    if report.conflicts:
+        lines.append("")
+        lines.append("Conflict samples:")
+        for conflict in report.conflicts[:10]:
+            lines.append(
+                f"- {conflict.entity} {conflict.github_key} {conflict.field}: "
+                f"ServiceNow='{conflict.servicenow_value}' vs GitHub='{conflict.github_value}'"
+            )
+        if len(report.conflicts) > 10:
+            lines.append(f"... and {len(report.conflicts) - 10} more")
+    if dry_run:
+        lines.append("")
+        lines.append("Dry-run enabled: no ServiceNow writes and cursor not advanced.")
     return "\n".join(lines)
 
 
@@ -850,7 +961,79 @@ def build_app() -> gr.Blocks:
                     outputs=ms_list_output,
                 )
 
-            # ── Tab 3: Parse Requirements ─────────────────────────────────
+            # ── Tab 3: ServiceNow Sync ────────────────────────────────────
+            with gr.Tab("🔄 ServiceNow Sync"):
+                gr.Markdown(
+                    "Incrementally sync GitHub milestones/issues into ServiceNow "
+                    "with GitHub as source of truth."
+                )
+                sn_enabled_note = (
+                    "Enabled in settings by default"
+                    if settings.servicenow_enabled
+                    else "Disabled by default — configure below to use"
+                )
+                gr.Markdown(f"_{sn_enabled_note}_")
+                with gr.Row():
+                    sn_repo = gr.Textbox(
+                        label="Repository (owner/repo)",
+                        placeholder="myorg/myrepo",
+                    )
+                    sn_dry_run = gr.Checkbox(
+                        label="Dry run (preview only)",
+                        value=True,
+                    )
+                with gr.Row():
+                    sn_url = gr.Textbox(
+                        label="ServiceNow URL",
+                        placeholder="https://example.service-now.com",
+                        value=settings.servicenow_url,
+                    )
+                    sn_token = gr.Textbox(
+                        label="ServiceNow Token (optional if user/password provided)",
+                        type="password",
+                        value=settings.servicenow_token,
+                    )
+                with gr.Row():
+                    sn_user = gr.Textbox(
+                        label="ServiceNow User (optional)",
+                        value=settings.servicenow_user,
+                    )
+                    sn_password = gr.Textbox(
+                        label="ServiceNow Password (optional)",
+                        type="password",
+                        value=settings.servicenow_password,
+                    )
+                with gr.Row():
+                    sn_milestone_table = gr.Textbox(
+                        label="Milestone Table",
+                        value=settings.servicenow_milestone_table,
+                    )
+                    sn_issue_table = gr.Textbox(
+                        label="Issue Table",
+                        value=settings.servicenow_issue_table,
+                    )
+                with gr.Row():
+                    sn_cursor_path = gr.Textbox(
+                        label="Cursor File Path",
+                        value=settings.servicenow_cursor_path,
+                    )
+                    sn_back_sync = gr.Textbox(
+                        label="Back-sync allowlist (optional csv: labels,assignees)",
+                        placeholder="labels,assignees",
+                    )
+                sn_sync_btn = gr.Button("Run ServiceNow Sync", variant="primary")
+                sn_sync_output = gr.Textbox(label="Result", interactive=False, lines=14)
+
+                sn_sync_btn.click(
+                    fn=_sync_servicenow,
+                    inputs=[
+                        github_token, sn_repo, sn_url, sn_user, sn_password, sn_token,
+                        sn_milestone_table, sn_issue_table, sn_cursor_path, sn_dry_run, sn_back_sync,
+                    ],
+                    outputs=sn_sync_output,
+                )
+
+            # ── Tab 4: Parse Requirements ─────────────────────────────────
             with gr.Tab("📄 Parse Requirements"):
                 gr.Markdown(
                     "Upload a markdown requirements document, paste it below, or "
@@ -943,7 +1126,7 @@ def build_app() -> gr.Blocks:
                     outputs=[drafts_table, parse_status],
                 )
 
-            # ── Tab 4: Submit Issues ─────────────────────────────────────
+            # ── Tab 5: Submit Issues ─────────────────────────────────────
             with gr.Tab("🚀 Submit Issues"):
                 gr.Markdown(
                     "Review the table below (carried over from the Parse tab) and "
@@ -986,7 +1169,7 @@ def build_app() -> gr.Blocks:
                     outputs=submit_output,
                 )
 
-            # ── Tab 5: Agile Planner ──────────────────────────────────
+            # ── Tab 6: Agile Planner ──────────────────────────────────
             with gr.Tab("🗂️ Agile Planner"):
                 gr.Markdown(
                     "Fetch all open issues and PRs, read existing GitHub blocking "

@@ -369,7 +369,7 @@ browser to access the UI.
 | Tab | Description |
 |---|---|
 | **📊 Summarize Activity** | Fetch GitHub activity (commits, issues, PRs, releases) for a repo and generate an AI summary |
-| **🏁 Milestones** | Create a new milestone or list existing milestones in a repository |
+| **🏁 Milestones** | Create a new milestone, queue several milestones for one-shot creation, or list existing milestones in a repository |
 | **🔄 ServiceNow Sync** | Preview/apply incremental GitHub → ServiceNow milestone/issue sync with cursor tracking |
 | **📄 Parse Requirements** | Upload or fetch a markdown requirements file and generate issue drafts via LLM |
 | **🚀 Submit Issues** | Review, edit, and selectively push the generated issue drafts to GitHub |
@@ -393,6 +393,7 @@ with two additional variables for the server:
 | `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
 | `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
 | `SERVICENOW_CURSOR_PATH` | Incremental sync cursor file path | `.git-review-sync-cursor.json` |
+| `DEFAULT_MILESTONES_JSON` | JSON array of default milestone definitions for the web UIs | — |
 | `GRADIO_SERVER_NAME` | Hostname or IP address to bind to | `0.0.0.0` |
 | `GRADIO_SERVER_PORT` | TCP port | `7860` |
 
@@ -400,11 +401,12 @@ with two additional variables for the server:
 
 ## Agent & Reflex UI
 
-git-review ships a conversational AI agent built on the
+git-review ships a production-style workspace built on the
 [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with a
-[Reflex](https://reflex.dev/) React frontend.  The agent can list, search,
-create, and update GitHub issues and pull requests, generate sprint plans, and
-parse requirements into issue drafts — all through a streaming chat interface.
+[Reflex](https://reflex.dev/) React frontend. The app now combines the
+streaming conversational agent with dedicated workflow pages for activity
+summaries, milestones, requirements-to-issues, ServiceNow sync, and agile
+planning.
 
 ### Installing the agent
 
@@ -420,6 +422,18 @@ git-review-agent
 
 Reflex will compile the frontend (Node.js is required on first run) and open
 the app at `http://localhost:3000`.
+
+### Workspace pages
+
+| Page | Description |
+|---|---|
+| **Overview** | Landing page that ties the workflows together and links into the main app areas |
+| **Agent** | Streaming chat with tool calls, reasoning cards, and HITL approval for write actions |
+| **Activity** | AI-powered repository or org activity summaries |
+| **Milestones** | Queue milestones, load defaults from env, create them in bulk, and review existing roadmap milestones |
+| **Requirements** | Fetch or paste requirements, seed milestones from the shared queue/defaults, generate editable drafts, and submit issues in one flow |
+| **ServiceNow** | Preview or apply GitHub → ServiceNow sync with the shared settings |
+| **Agile** | Generate sprint plans, inspect dependencies, and apply approved updates back to GitHub |
 
 ### Configuring the agent
 
@@ -440,10 +454,21 @@ environment variables / `.env` entries:
 | `SERVICENOW_MILESTONE_TABLE` | ServiceNow milestone table | `u_github_milestone` |
 | `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
 | `SERVICENOW_CURSOR_PATH` | Cursor file path for incremental sync | `.git-review-sync-cursor.json` |
+| `DEFAULT_MILESTONES_JSON` | JSON array of default milestone definitions shared by the Milestones and Requirements pages | — |
 
 When ServiceNow integration is enabled in the settings sidebar, the agent can
 use `preview_servicenow_sync` (dry run) and `apply_servicenow_sync` (write mode,
-with HITL approval) against the configured repository.
+with HITL approval) against the configured repository, and the dedicated
+ServiceNow page can run the same sync flow with the shared credentials.
+
+`DEFAULT_MILESTONES_JSON` should be a JSON array such as:
+
+```json
+[
+  {"title": "Backlog", "description": "Shared roadmap"},
+  {"title": "MVP", "due_on": "2026-06-30", "description": "Initial release scope"}
+]
+```
 
 ### Streaming UX
 
@@ -688,10 +713,11 @@ git_review/
 ├── cli.py                       # Click CLI entry-point
 ├── agent_tools.py               # OpenAI Agents SDK tool functions (requires [agent] extra)
 ├── agent.py                     # Agent builder + streaming run helper
+├── ui_workflows.py              # Shared workflow helpers used by the web UIs
 └── agent_app/                   # Reflex chat frontend (requires [agent] extra)
-    ├── agent_app.py             # Reflex app entry point + main() for git-review-agent script
+    ├── agent_app.py             # Reflex app entry point, shared shell, and workflow pages
     ├── rxconfig.py              # Reflex configuration
-    ├── state.py                 # Reactive app state (chat history, HITL queue, settings)
+    ├── state.py                 # Reactive app state (chat, workflow forms, results, settings)
     └── components/
         ├── chat.py              # Chat thread with streaming text + thinking indicator
         ├── tool_call.py         # Collapsible tool-call / tool-result cards

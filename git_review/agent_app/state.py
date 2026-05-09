@@ -41,6 +41,22 @@ import reflex as rx
 
 from ..agent import AgentContext, run_agent_streaming
 from ..config import AppSettings
+from ..ui_workflows import (
+    apply_agile_labels,
+    apply_agile_relationships,
+    append_milestone_to_batch,
+    create_milestone,
+    create_milestones_batch,
+    fetch_requirements_from_repo,
+    list_milestones,
+    load_default_milestones_text,
+    parse_requirements,
+    run_agile_planner,
+    run_agile_planner_state,
+    submit_issues,
+    summarize_activity,
+    sync_servicenow,
+)
 
 try:
     from agents.items import ToolApprovalItem
@@ -76,6 +92,19 @@ class HITLRequest(rx.Model):
     tool_name: str
     args_json: str
     description: str
+
+
+class RequirementDraft(rx.Model):
+    """Editable issue draft shown in the requirements workflow."""
+
+    title: str
+    body: str
+    labels: str = ""
+    assignees: str = ""
+    milestone: str = ""
+
+
+_REQUIREMENT_DRAFT_FIELDS = frozenset(RequirementDraft.__annotations__)
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +144,59 @@ class AppState(rx.State):
     servicenow_cursor_path: str = ".git-review-sync-cursor.json"
     settings_open: bool = False
 
+    # ---- Workflow pages ----
+    summary_repo: str = ""
+    summary_all_repos: bool = False
+    summary_author: str = ""
+    summary_days: str = "7"
+    summary_since: str = ""
+    summary_until: str = ""
+    summary_prompt: str = ""
+    summary_status: str = ""
+    summary_output: str = ""
+
+    milestone_repo: str = ""
+    milestone_title: str = ""
+    milestone_description: str = ""
+    milestone_due_on: str = ""
+    milestone_state: str = "open"
+    milestone_create_result: str = ""
+    milestone_queue_text: str = ""
+    milestone_defaults_status: str = ""
+    milestone_list_repo: str = ""
+    milestone_list_state: str = "open"
+    milestone_list_output: str = ""
+
+    sync_repo: str = ""
+    sync_dry_run: bool = True
+    sync_back_sync_fields: str = ""
+    sync_result: str = ""
+
+    requirements_repo: str = ""
+    requirements_path: str = "docs/requirements.md"
+    requirements_text: str = ""
+    requirements_fetch_status: str = ""
+    requirements_use_milestones: bool = False
+    requirements_milestones_repo: str = ""
+    requirements_status: str = ""
+    requirements_milestone_status: str = ""
+    requirement_drafts: list[RequirementDraft] = []
+    submit_repo: str = ""
+    submit_milestone_override: str = ""
+    submit_status: str = ""
+
+    agile_repo: str = ""
+    agile_capacity: str = "10"
+    agile_sprints: str = "3"
+    agile_status: str = ""
+    agile_dependencies_markdown: str = ""
+    agile_plan_markdown: str = ""
+    agile_apply_status: str = ""
+
     # ---- Backend-only (not sent to frontend) ----
     _pending_result: Any = None
     _conversation_history: list = []
+    _agile_result: Any = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -149,6 +228,28 @@ class AppState(rx.State):
             self.servicenow_issue_table = settings.servicenow_issue_table
         if settings.servicenow_cursor_path:
             self.servicenow_cursor_path = settings.servicenow_cursor_path
+        if settings.default_milestones_json and not self.milestone_queue_text.strip():
+            try:
+                queue_text, status = load_default_milestones_text(settings.default_milestones_json)
+                self.milestone_queue_text = queue_text
+                self.milestone_defaults_status = status
+            except ValueError as exc:
+                self.milestone_defaults_status = f"❌  {exc}"
+        repo_value = self._settings_repo_value()
+        if repo_value:
+            for field_name in (
+                "summary_repo",
+                "milestone_repo",
+                "milestone_list_repo",
+                "sync_repo",
+                "requirements_repo",
+                "submit_repo",
+                "agile_repo",
+            ):
+                if not getattr(self, field_name):
+                    setattr(self, field_name, repo_value)
+            if not self.requirements_milestones_repo:
+                self.requirements_milestones_repo = repo_value
 
     # ------------------------------------------------------------------ #
     # Settings sidebar
@@ -201,6 +302,309 @@ class AppState(rx.State):
 
     def set_input_value(self, value: str) -> None:
         self.input_value = value
+
+    # ------------------------------------------------------------------ #
+    # Workflow helpers
+    # ------------------------------------------------------------------ #
+
+    def _settings_repo_value(self) -> str:
+        owner = self.owner.strip()
+        repo = self.repo.strip()
+        if owner and repo:
+            return f"{owner}/{repo}"
+        return ""
+
+    def set_workflow_field(self, field_name: str, value: Any) -> None:
+        setattr(self, field_name, value)
+
+    def toggle_workflow_flag(self, field_name: str) -> None:
+        setattr(self, field_name, not bool(getattr(self, field_name)))
+
+    def use_settings_repo(self, field_name: str) -> None:
+        repo_value = self._settings_repo_value()
+        if repo_value:
+            setattr(self, field_name, repo_value)
+
+    def sync_submit_repo_from_requirements(self) -> None:
+        if self.requirements_repo.strip():
+            self.submit_repo = self.requirements_repo.strip()
+
+    def update_requirement_draft(self, value: str, idx: int, field_name: str) -> None:
+        if field_name not in _REQUIREMENT_DRAFT_FIELDS:
+            logger.warning("Ignoring requirement draft update for unknown field: %s", field_name)
+            return
+        drafts = list(self.requirement_drafts)
+        if not 0 <= idx < len(drafts):
+            logger.warning(
+                "Ignoring requirement draft update for out-of-range index %s (draft count=%s)",
+                idx,
+                len(drafts),
+            )
+            return
+        updated = drafts[idx].model_copy()
+        setattr(updated, field_name, value)
+        drafts[idx] = updated
+        self.requirement_drafts = drafts
+
+    def clear_requirement_drafts(self) -> None:
+        self.requirement_drafts = []
+        self.requirements_status = ""
+        self.submit_status = ""
+
+    def load_default_milestones(self) -> None:
+        settings = AppSettings()
+        try:
+            queue_text, status = load_default_milestones_text(settings.default_milestones_json)
+        except ValueError as exc:
+            self.milestone_defaults_status = f"❌  {exc}"
+            return
+        self.milestone_queue_text = queue_text
+        self.milestone_defaults_status = status
+
+    def queue_current_milestone(self) -> None:
+        next_queue, status = append_milestone_to_batch(
+            self.milestone_queue_text,
+            self.milestone_title,
+            self.milestone_description,
+            self.milestone_due_on,
+            self.milestone_state,
+        )
+        self.milestone_queue_text = next_queue
+        self.milestone_create_result = status
+        if status.startswith("✅"):
+            self.milestone_title = ""
+            self.milestone_description = ""
+            self.milestone_due_on = ""
+
+    def clear_milestone_queue(self) -> None:
+        self.milestone_queue_text = ""
+        self.milestone_create_result = ""
+
+    def use_milestones_for_requirements(self) -> None:
+        repo_value = (self.requirements_milestones_repo or self.requirements_repo).strip()
+        if repo_value:
+            self.requirements_milestones_repo = repo_value
+            self.requirements_use_milestones = True
+
+    def _draft_rows(self) -> list[list[str]]:
+        return [
+            [
+                str(index + 1),
+                draft.title,
+                draft.body,
+                draft.labels,
+                draft.assignees,
+                draft.milestone,
+            ]
+            for index, draft in enumerate(self.requirement_drafts)
+        ]
+
+    def _hydrate_requirement_drafts(self, rows: list[list[Any]]) -> None:
+        self.requirement_drafts = [
+            RequirementDraft(
+                title=str(row[1]) if len(row) > 1 else "",
+                body=str(row[2]) if len(row) > 2 else "",
+                labels=str(row[3]) if len(row) > 3 else "",
+                assignees=str(row[4]) if len(row) > 4 else "",
+                milestone=str(row[5]) if len(row) > 5 else "",
+            )
+            for row in rows
+        ]
+
+    def _safe_int(self, raw: str, default: int) -> int:
+        try:
+            return max(1, int((raw or "").strip() or str(default)))
+        except ValueError:
+            return default
+
+    async def generate_summary(self) -> None:
+        self.summary_status = "Working…"
+        self.summary_output = ""
+        yield
+        output, status = summarize_activity(
+            self.github_token,
+            self.openai_key,
+            self.agent_model,
+            self.openai_base_url,
+            self.summary_repo,
+            self._safe_int(self.summary_days, 7),
+            self.summary_since,
+            self.summary_until,
+            self.summary_author,
+            self.summary_prompt,
+            self.summary_all_repos,
+        )
+        self.summary_output = output
+        self.summary_status = status
+        yield
+
+    async def create_milestone_workflow(self) -> None:
+        self.milestone_create_result = "Working…"
+        yield
+        self.milestone_create_result = create_milestone(
+            self.github_token,
+            self.milestone_repo,
+            self.milestone_title,
+            self.milestone_description,
+            self.milestone_due_on,
+            self.milestone_state,
+        )
+        yield
+
+    async def create_queued_milestones_workflow(self) -> None:
+        self.milestone_create_result = "Working…"
+        yield
+        self.milestone_create_result, _ = create_milestones_batch(
+            self.github_token,
+            self.milestone_repo,
+            self.milestone_queue_text,
+        )
+        yield
+
+    async def list_milestones_workflow(self) -> None:
+        self.milestone_list_output = "Working…"
+        yield
+        self.milestone_list_output = list_milestones(
+            self.github_token,
+            self.milestone_list_repo,
+            self.milestone_list_state,
+        )
+        yield
+
+    async def run_servicenow_sync(self) -> None:
+        self.sync_result = "Working…"
+        yield
+        self.sync_result = sync_servicenow(
+            self.github_token,
+            self.sync_repo,
+            self.servicenow_url,
+            self.servicenow_user,
+            self.servicenow_password,
+            self.servicenow_token,
+            self.servicenow_milestone_table,
+            self.servicenow_issue_table,
+            self.servicenow_cursor_path,
+            self.sync_dry_run,
+            self.sync_back_sync_fields,
+        )
+        yield
+
+    async def fetch_requirements_text(self) -> None:
+        self.requirements_fetch_status = "Working…"
+        yield
+        text, status = fetch_requirements_from_repo(
+            self.github_token,
+            self.requirements_repo,
+            self.requirements_path,
+        )
+        self.requirements_text = text
+        self.requirements_fetch_status = status
+        if self.requirements_repo.strip() and not self.submit_repo.strip():
+            self.submit_repo = self.requirements_repo.strip()
+        if self.requirements_repo.strip() and not self.requirements_milestones_repo.strip():
+            self.requirements_milestones_repo = self.requirements_repo.strip()
+        yield
+
+    async def parse_requirements_workflow(self) -> None:
+        self.requirements_status = "Working…"
+        self.submit_status = ""
+        yield
+        rows, status = parse_requirements(
+            self.github_token,
+            self.openai_key,
+            self.agent_model,
+            self.openai_base_url,
+            self.requirements_text,
+            None,
+            self.requirements_use_milestones,
+            self.requirements_milestones_repo or self.requirements_repo,
+        )
+        self.requirements_status = status
+        self._hydrate_requirement_drafts(rows)
+        if self.requirements_repo.strip():
+            self.submit_repo = self.requirements_repo.strip()
+        yield
+
+    async def seed_requirements_milestones(self) -> None:
+        self.requirements_milestone_status = "Working…"
+        yield
+        target_repo = (self.requirements_milestones_repo or self.requirements_repo).strip()
+        status, _ = create_milestones_batch(
+            self.github_token,
+            target_repo,
+            self.milestone_queue_text,
+        )
+        self.requirements_milestone_status = status
+        if status.startswith("✅") or status.startswith("⚠️"):
+            self.requirements_use_milestones = True
+            if target_repo:
+                self.requirements_milestones_repo = target_repo
+        yield
+
+    async def submit_requirement_drafts(self) -> None:
+        self.submit_status = "Working…"
+        yield
+        self.submit_status = submit_issues(
+            self.github_token,
+            self.submit_repo,
+            self.submit_milestone_override,
+            self._draft_rows(),
+        )
+        yield
+
+    async def run_agile_workflow(self) -> None:
+        self.agile_status = "Working…"
+        self.agile_apply_status = ""
+        self.agile_dependencies_markdown = ""
+        self.agile_plan_markdown = ""
+        self._agile_result = None
+        yield
+        deps_md, plan_md, status = run_agile_planner(
+            self.github_token,
+            self.openai_key,
+            self.agent_model,
+            self.openai_base_url,
+            self.agile_repo,
+            self._safe_int(self.agile_capacity, 10),
+            self._safe_int(self.agile_sprints, 3),
+            False,
+        )
+        self.agile_dependencies_markdown = deps_md
+        self.agile_plan_markdown = plan_md
+        self.agile_status = status
+        self._agile_result = run_agile_planner_state(
+            self.github_token,
+            self.openai_key,
+            self.agent_model,
+            self.openai_base_url,
+            self.agile_repo,
+            self._safe_int(self.agile_capacity, 10),
+            self._safe_int(self.agile_sprints, 3),
+            False,
+        )
+        yield
+
+    async def apply_agile_relationships_workflow(self) -> None:
+        self.agile_apply_status = "Working…"
+        yield
+        self.agile_apply_status = apply_agile_relationships(
+            self.github_token,
+            self.agile_repo,
+            False,
+            self._agile_result,
+        )
+        yield
+
+    async def apply_agile_labels_workflow(self) -> None:
+        self.agile_apply_status = "Working…"
+        yield
+        self.agile_apply_status = apply_agile_labels(
+            self.github_token,
+            self.agile_repo,
+            False,
+            self._agile_result,
+        )
+        yield
 
     # ------------------------------------------------------------------ #
     # Chat helpers

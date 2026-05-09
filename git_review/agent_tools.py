@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 try:
@@ -150,7 +150,11 @@ def _sync_servicenow_for_context(
     )
 
     repo_key = f"{ctx.owner}/{ctx.repo}"
-    cursor_data = load_sync_cursor(ctx.servicenow_cursor_path)
+    cursor_file = os.path.realpath(ctx.servicenow_cursor_path or ".git-review-sync-cursor.json")
+    cwd = os.path.realpath(os.getcwd())
+    if cursor_file != cwd and not cursor_file.startswith(cwd + os.sep):
+        return json.dumps({"error": "Cursor file path must be within current working directory."})
+    cursor_data = load_sync_cursor(cursor_file)
     since = get_repo_cursor(cursor_data, repo_key)
     report, next_cursor = syncer.sync_repo(
         ctx.owner,
@@ -162,13 +166,13 @@ def _sync_servicenow_for_context(
 
     if not dry_run:
         set_repo_cursor(cursor_data, repo_key, next_cursor)
-        save_sync_cursor(ctx.servicenow_cursor_path, cursor_data)
+        save_sync_cursor(cursor_file, cursor_data)
 
     return json.dumps(
         {
             "repo": repo_key,
             "dry_run": dry_run,
-            "since": since.isoformat() if isinstance(since, datetime) else "",
+            "since": since.isoformat() if since is not None else "",
             "next_cursor": next_cursor.isoformat(),
             "milestones_scanned": report.milestones_scanned,
             "milestones_created": report.milestones_created,

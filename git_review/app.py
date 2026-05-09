@@ -417,7 +417,10 @@ def _sync_servicenow(
             issue_table=(issue_table or "").strip() or "u_github_issue",
         )
         repo_key = f"{owner}/{repo_name}"
-        cursor_file = (cursor_path or "").strip() or ".git-review-sync-cursor.json"
+        cursor_file = os.path.realpath((cursor_path or "").strip() or ".git-review-sync-cursor.json")
+        cwd = os.path.realpath(os.getcwd())
+        if cursor_file != cwd and not cursor_file.startswith(cwd + os.sep):
+            return "❌  Cursor file path must be inside the current working directory."
         cursor_data = load_sync_cursor(cursor_file)
         since = get_repo_cursor(cursor_data, repo_key)
         report, next_cursor = syncer.sync_repo(

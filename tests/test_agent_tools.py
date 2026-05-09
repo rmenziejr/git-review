@@ -538,3 +538,19 @@ async def test_ready_pr_for_review_sets_draft_false() -> None:
     mock_gh.update_pull_request.assert_called_once_with(
         "myorg", "myrepo", 15, draft=False
     )
+
+
+@pytest.mark.asyncio
+async def test_preview_servicenow_sync_rejects_cursor_outside_cwd() -> None:
+    agent_ctx = _make_agent_ctx()
+    agent_ctx.servicenow_enabled = True
+    agent_ctx.servicenow_url = "https://example.service-now.com"
+    agent_ctx.servicenow_token = "sn-token"
+    agent_ctx.servicenow_cursor_path = "../outside.json"
+    args = '{"allow_back_sync_fields": ""}'
+    tc = _make_tool_ctx(agent_ctx, "preview_servicenow_sync", args)
+
+    result = await preview_servicenow_sync.on_invoke_tool(tc, args)
+
+    payload = json.loads(result)
+    assert "Cursor file path must be within current working directory." in payload["error"]

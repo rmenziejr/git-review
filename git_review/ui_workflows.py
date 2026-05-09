@@ -224,7 +224,11 @@ def parse_milestone_batch_text(batch_text: str) -> list[MilestoneSeed]:
         elif len(parts) == 2:
             title, description = parts
         elif len(parts) == 3:
-            title, due_on, description = parts
+            title, due_on, third = parts
+            if third.strip().lower() in {"open", "closed"}:
+                state = third
+            else:
+                description = third
         else:
             title = parts[0]
             due_on = parts[1]
@@ -657,7 +661,11 @@ def parse_requirements(
     if not drafts:
         return _EMPTY_TABLE, "⚠️  No issues were extracted from the requirements document."
 
-    milestone_note = f" (with {len(milestones)} milestone(s) as context)" if milestones else ""
+    milestone_note = (
+        f" (with {len(milestones)} milestone(s) as context)"
+        if milestones is not None and len(milestones) > 0
+        else ""
+    )
     return (
         _drafts_to_table(drafts),
         f"✅  Extracted {len(drafts)} issue draft(s){milestone_note}. Review and edit below.",

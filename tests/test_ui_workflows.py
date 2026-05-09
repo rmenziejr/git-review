@@ -107,6 +107,26 @@ def test_create_milestones_batch_creates_multiple_entries() -> None:
     assert mock_gh.create_milestone.call_count == 2
 
 
+def test_create_milestones_batch_accepts_three_part_state_shortcut() -> None:
+    mock_gh = MagicMock()
+    mock_gh.create_milestone.return_value = {
+        "number": 1,
+        "title": "Backlog",
+        "html_url": "https://github.com/acme/app/milestone/1",
+    }
+
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        status, created = create_milestones_batch(
+            "ghp_test",
+            "acme/app",
+            "Backlog | 2026-06-01 | closed",
+        )
+
+    assert len(created) == 1
+    assert "Created 1 of 1 milestone(s) for acme/app." in status
+    assert mock_gh.create_milestone.call_args.kwargs["state"] == "closed"
+
+
 def test_submit_issues_pushes_rows_to_github() -> None:
     mock_factory = MagicMock()
     mock_factory.push_issues.return_value = [{"number": 12, "html_url": "https://github.com/acme/app/issues/12"}]

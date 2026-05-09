@@ -331,13 +331,20 @@ class AppState(rx.State):
 
     def update_requirement_draft(self, value: str, idx: int, field_name: str) -> None:
         if field_name not in _REQUIREMENT_DRAFT_FIELDS:
+            logger.warning("Ignoring requirement draft update for unknown field: %s", field_name)
             return
         drafts = list(self.requirement_drafts)
-        if 0 <= idx < len(drafts):
-            updated = drafts[idx].model_copy()
-            setattr(updated, field_name, value)
-            drafts[idx] = updated
-            self.requirement_drafts = drafts
+        if not 0 <= idx < len(drafts):
+            logger.warning(
+                "Ignoring requirement draft update for out-of-range index %s (draft count=%s)",
+                idx,
+                len(drafts),
+            )
+            return
+        updated = drafts[idx].model_copy()
+        setattr(updated, field_name, value)
+        drafts[idx] = updated
+        self.requirement_drafts = drafts
 
     def clear_requirement_drafts(self) -> None:
         self.requirement_drafts = []

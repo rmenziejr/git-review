@@ -536,7 +536,8 @@ def _milestones_page() -> rx.Component:
                     width="100%",
                 ),
                 "One milestone per line. Format: title | due_on | state | description. "
-                "Shortcuts also support title only, title | description, or title | due_on | description.",
+                "Shortcuts also support title only, title | description, title | due_on | description "
+                "(state defaults to open), or title | due_on | state.",
             ),
             rx.hstack(
                 rx.button("Load defaults from env", on_click=AppState.load_default_milestones),

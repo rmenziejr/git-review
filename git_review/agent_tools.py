@@ -339,6 +339,96 @@ async def list_pull_requests(
 
 
 @function_tool(needs_approval=False)
+async def get_pull_request(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str,
+    pull_number: int,
+) -> str:
+    """Fetch full details for a single pull request.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        pull_number: The pull request number.
+    """
+    gh = _make_gh(ctx.context)
+    pr = gh.get_pull_request(owner, repo, pull_number)
+    return json.dumps(
+        {
+            "number": pr.get("number"),
+            "title": pr.get("title"),
+            "state": pr.get("state"),
+            "draft": bool(pr.get("draft", False)),
+            "url": pr.get("html_url"),
+            "body": pr.get("body") or "",
+            "base_branch": (pr.get("base") or {}).get("ref", ""),
+            "head_branch": (pr.get("head") or {}).get("ref", ""),
+            "changed_files": pr.get("changed_files", 0),
+            "commits": pr.get("commits", 0),
+            "additions": pr.get("additions", 0),
+            "deletions": pr.get("deletions", 0),
+        }
+    )
+
+
+@function_tool(needs_approval=False)
+async def compare_branches(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str,
+    base: str,
+    head: str,
+) -> str:
+    """Compare two branches/refs and return changed files plus commit summary."""
+    gh = _make_gh(ctx.context)
+    comparison = gh.compare_branches(owner, repo, base, head)
+    files = comparison.get("files") or []
+    commits = comparison.get("commits") or []
+    return json.dumps(
+        {
+            "status": comparison.get("status"),
+            "ahead_by": comparison.get("ahead_by", 0),
+            "behind_by": comparison.get("behind_by", 0),
+            "total_commits": comparison.get("total_commits", 0),
+            "files": [
+                {
+                    "filename": f.get("filename"),
+                    "status": f.get("status"),
+                    "additions": f.get("additions", 0),
+                    "deletions": f.get("deletions", 0),
+                    "changes": f.get("changes", 0),
+                    "patch": f.get("patch", ""),
+                }
+                for f in files
+            ],
+            "commits": [
+                {
+                    "sha": c.get("sha"),
+                    "message": ((c.get("commit") or {}).get("message") or "").split("\n", 1)[0],
+                    "url": c.get("html_url"),
+                }
+                for c in commits
+            ],
+        }
+    )
+
+
+@function_tool(needs_approval=False)
+async def read_file_at_ref(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str,
+) -> str:
+    """Read a repository file from a specific branch/tag/SHA."""
+    gh = _make_gh(ctx.context)
+    content = gh.get_file_content(owner, repo, path, ref=ref)
+    return json.dumps({"path": path, "ref": ref, "content": content})
+
+
+@function_tool(needs_approval=False)
 async def create_issue_draft(
     ctx: RunContextWrapper[AgentContext],
     requirements: str,
@@ -613,6 +703,20 @@ async def update_issue(
 
 
 @function_tool(needs_approval=True)
+async def add_issue_comment(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str,
+    issue_number: int,
+    body: str,
+) -> str:
+    """Add a comment to a GitHub issue after human approval."""
+    gh = _make_gh(ctx.context)
+    result = gh.create_issue_comment(owner, repo, issue_number, body)
+    return json.dumps({"id": result.get("id"), "url": result.get("html_url")})
+
+
+@function_tool(needs_approval=True)
 async def create_draft_pr(
     ctx: RunContextWrapper[AgentContext],
     owner: str,
@@ -680,6 +784,20 @@ async def update_pull_request(
 
 
 @function_tool(needs_approval=True)
+async def add_pull_request_comment(
+    ctx: RunContextWrapper[AgentContext],
+    owner: str,
+    repo: str,
+    pull_number: int,
+    body: str,
+) -> str:
+    """Add a conversation comment to a pull request after human approval."""
+    gh = _make_gh(ctx.context)
+    result = gh.create_pull_request_comment(owner, repo, pull_number, body)
+    return json.dumps({"id": result.get("id"), "url": result.get("html_url")})
+
+
+@function_tool(needs_approval=True)
 async def ready_pr_for_review(
     ctx: RunContextWrapper[AgentContext],
     owner: str,
@@ -708,14 +826,19 @@ ALL_TOOLS = [
     search_issues,
     get_issue,
     list_pull_requests,
+    get_pull_request,
+    compare_branches,
+    read_file_at_ref,
     create_issue_draft,
     agile_plan,
     read_project_status_board,
     create_project,
     push_issue_draft,
     update_issue,
+    add_issue_comment,
     create_draft_pr,
     update_pull_request,
+    add_pull_request_comment,
     ready_pr_for_review,
     update_project_status,
 ]

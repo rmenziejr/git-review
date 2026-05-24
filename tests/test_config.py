@@ -18,6 +18,10 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SERVICENOW_URL", raising=False)
     monkeypatch.delenv("SERVICENOW_TOKEN", raising=False)
     monkeypatch.delenv("DEFAULT_MILESTONES_JSON", raising=False)
+    monkeypatch.delenv("GITHUB_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GITHUB_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GITHUB_OAUTH_SCOPES", raising=False)
+    monkeypatch.delenv("AGENT_SESSION_TTL_SECONDS", raising=False)
 
     settings = AppSettings()
 
@@ -29,6 +33,10 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.servicenow_url == ""
     assert settings.servicenow_token == ""
     assert settings.default_milestones_json == ""
+    assert settings.github_oauth_client_id == ""
+    assert settings.github_oauth_client_secret == ""
+    assert settings.github_oauth_scopes == "repo,read:user,read:org"
+    assert settings.agent_session_ttl_seconds == 28_800
 
 
 def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,6 +47,10 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SERVICENOW_ENABLED", "true")
     monkeypatch.setenv("SERVICENOW_URL", "https://example.service-now.com")
     monkeypatch.setenv("SERVICENOW_TOKEN", "sn-token")
+    monkeypatch.setenv("GITHUB_OAUTH_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GITHUB_OAUTH_CLIENT_SECRET", "oauth-client-secret")
+    monkeypatch.setenv("GITHUB_OAUTH_SCOPES", "repo,read:user")
+    monkeypatch.setenv("AGENT_SESSION_TTL_SECONDS", "1200")
     monkeypatch.setenv(
         "DEFAULT_MILESTONES_JSON",
         '[{"title":"Backlog","description":"Shared roadmap"}]',
@@ -54,6 +66,10 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.servicenow_url == "https://example.service-now.com"
     assert settings.servicenow_token == "sn-token"
     assert settings.default_milestones_json == '[{"title":"Backlog","description":"Shared roadmap"}]'
+    assert settings.github_oauth_client_id == "oauth-client-id"
+    assert settings.github_oauth_client_secret == "oauth-client-secret"
+    assert settings.github_oauth_scopes == "repo,read:user"
+    assert settings.agent_session_ttl_seconds == 1200
 
 
 def test_explicit_construction_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:

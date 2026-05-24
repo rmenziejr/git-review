@@ -442,7 +442,15 @@ environment variables / `.env` entries:
 
 | Variable | Description | Default |
 |---|---|---|
-| `GITHUB_TOKEN` | GitHub personal access token | — |
+| `GITHUB_OAUTH_CLIENT_ID` | GitHub OAuth app client ID for browser sign-in | — |
+| `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth app client secret for token exchange | — |
+| `GITHUB_OAUTH_SCOPES` | OAuth scopes requested during sign-in (must include `read:user`) | `repo,read:user,read:org` |
+| `GITHUB_OAUTH_CALLBACK_PATH` | Callback path (or absolute URL) used by OAuth flow | `/auth/github/callback` |
+| `AGENT_SESSION_COOKIE_NAME` | Cookie name for authenticated agent sessions | `git_review_session` |
+| `AGENT_SESSION_TTL_SECONDS` | Session lifetime in seconds | `28800` |
+| `AGENT_COOKIE_SECURE` | Mark session cookie as `Secure` | `true` |
+| `AGENT_COOKIE_SAMESITE` | Session cookie SameSite policy | `lax` |
+| `AGENT_USER_SETTINGS_PATH` | JSON file path for per-user model settings persistence | `.git-review-agent-user-settings.json` |
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL (Ollama, Azure, etc.) | — |
 | `AGENT_MODEL` | LLM model used by the agent | `gpt-4o` |
@@ -455,6 +463,13 @@ environment variables / `.env` entries:
 | `SERVICENOW_ISSUE_TABLE` | ServiceNow issue/task table | `u_github_issue` |
 | `SERVICENOW_CURSOR_PATH` | Cursor file path for incremental sync | `.git-review-sync-cursor.json` |
 | `DEFAULT_MILESTONES_JSON` | JSON array of default milestone definitions shared by the Milestones and Requirements pages | — |
+
+### Agent auth migration notes
+
+- The Reflex agent workspace now uses GitHub OAuth login in-browser instead of entering a GitHub token in Settings.
+- `GITHUB_TOKEN` remains supported for CLI and Gradio workflows.
+- OpenAI model settings in the Reflex workspace are now saved per authenticated GitHub user account on the server.
+- When the configured session TTL expires, the app requires users to sign in again.
 
 When ServiceNow integration is enabled in the settings sidebar, the agent can
 use `preview_servicenow_sync` (dry run) and `apply_servicenow_sync` (write mode,

@@ -63,14 +63,43 @@ def settings_panel() -> rx.Component:
                     placeholder="e.g. myrepo",
                 ),
                 rx.divider(),
-                rx.text("Credentials", size="2", weight="bold", color_scheme="blue"),
-                _labeled_input(
-                    "GitHub Token",
-                    AppState.github_token,
-                    AppState.set_github_token,
-                    placeholder="ghp_...",
-                    password=True,
+                rx.text("GitHub Authentication", size="2", weight="bold", color_scheme="blue"),
+                rx.text(
+                    AppState.auth_status,
+                    size="2",
+                    color_scheme=rx.cond(AppState.authenticated, "green", "gray"),
                 ),
+                rx.cond(
+                    AppState.authenticated,
+                    rx.vstack(
+                        rx.text(
+                            rx.cond(AppState.github_name != "", AppState.github_name, AppState.github_login),
+                            size="2",
+                        ),
+                        rx.text(AppState.github_login, size="1", color_scheme="gray"),
+                        rx.cond(
+                            AppState.github_orgs != "",
+                            rx.text("Org access: " + AppState.github_orgs, size="1", color_scheme="gray"),
+                            rx.fragment(),
+                        ),
+                        rx.text("Session expires: " + AppState.session_expires_at, size="1", color_scheme="gray"),
+                        rx.link(
+                            rx.button("Sign out", size="1", variant="outline", color_scheme="gray"),
+                            href="/auth/github/logout",
+                            underline="none",
+                        ),
+                        spacing="1",
+                        width="100%",
+                        align_items="start",
+                    ),
+                    rx.link(
+                        rx.button("Sign in with GitHub", size="2", color_scheme="indigo"),
+                        href="/auth/github/login",
+                        underline="none",
+                    ),
+                ),
+                rx.divider(),
+                rx.text("Model credentials", size="2", weight="bold", color_scheme="blue"),
                 _labeled_input(
                     "OpenAI API Key",
                     AppState.openai_key,

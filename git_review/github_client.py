@@ -190,6 +190,18 @@ class GitHubClient:
         raw = data.get("content", "")
         return base64.b64decode(raw).decode("utf-8")
 
+    def get_authenticated_user(self) -> dict[str, Any]:
+        """Return the currently authenticated user profile."""
+        data = self._get("user")
+        if not isinstance(data, dict):
+            raise ValueError("GitHub API response for /user was not an object.")
+        return data
+
+    def get_user_orgs(self) -> list[dict[str, Any]]:
+        """Return organisations visible to the authenticated user."""
+        raw = self._paginate("user/orgs")
+        return [item for item in raw if isinstance(item, dict)]
+
     def get_commits(
         self,
         owner: str,

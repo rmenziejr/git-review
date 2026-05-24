@@ -44,6 +44,17 @@ class AppSettings(BaseSettings):
     ``git_review_model``    ``GIT_REVIEW_MODEL``
     ``openai_base_url``     ``OPENAI_BASE_URL``
     ``agent_model``         ``AGENT_MODEL``
+    ``github_oauth_client_id`` ``GITHUB_OAUTH_CLIENT_ID``
+    ``github_oauth_client_secret`` ``GITHUB_OAUTH_CLIENT_SECRET``
+    ``github_oauth_scopes`` ``GITHUB_OAUTH_SCOPES``
+    ``github_oauth_authorize_url`` ``GITHUB_OAUTH_AUTHORIZE_URL``
+    ``github_oauth_token_url`` ``GITHUB_OAUTH_TOKEN_URL``
+    ``github_oauth_callback_path`` ``GITHUB_OAUTH_CALLBACK_PATH``
+    ``agent_session_cookie_name`` ``AGENT_SESSION_COOKIE_NAME``
+    ``agent_session_ttl_seconds`` ``AGENT_SESSION_TTL_SECONDS``
+    ``agent_cookie_secure`` ``AGENT_COOKIE_SECURE``
+    ``agent_cookie_samesite`` ``AGENT_COOKIE_SAMESITE``
+    ``agent_user_settings_path`` ``AGENT_USER_SETTINGS_PATH``
     ``servicenow_enabled``  ``SERVICENOW_ENABLED``
     ``servicenow_url``      ``SERVICENOW_URL``
     ``servicenow_user``     ``SERVICENOW_USER``
@@ -91,6 +102,50 @@ class AppSettings(BaseSettings):
             "LLM model identifier used by the conversational agent "
             "(e.g. 'gpt-4o', 'gpt-4o-mini')."
         ),
+    )
+    github_oauth_client_id: str = Field(
+        default="",
+        description="GitHub OAuth App client ID used for browser sign-in.",
+    )
+    github_oauth_client_secret: str = Field(
+        default="",
+        description="GitHub OAuth App client secret used for token exchange.",
+    )
+    github_oauth_scopes: str = Field(
+        default="repo,read:user,read:org",
+        description="Comma-separated GitHub OAuth scopes requested during sign-in.",
+    )
+    github_oauth_authorize_url: str = Field(
+        default="https://github.com/login/oauth/authorize",
+        description="GitHub OAuth authorize endpoint.",
+    )
+    github_oauth_token_url: str = Field(
+        default="https://github.com/login/oauth/access_token",
+        description="GitHub OAuth token endpoint.",
+    )
+    github_oauth_callback_path: str = Field(
+        default="/auth/github/callback",
+        description="Callback path used by the OAuth flow.",
+    )
+    agent_session_cookie_name: str = Field(
+        default="git_review_session",
+        description="Cookie name used to track authenticated agent sessions.",
+    )
+    agent_session_ttl_seconds: int = Field(
+        default=28_800,
+        description="Agent session lifetime in seconds.",
+    )
+    agent_cookie_secure: bool = Field(
+        default=True,
+        description="Whether to mark the session cookie as Secure.",
+    )
+    agent_cookie_samesite: str = Field(
+        default="lax",
+        description="SameSite policy for the session cookie (lax/strict/none).",
+    )
+    agent_user_settings_path: str = Field(
+        default=".git-review-agent-user-settings.json",
+        description="Path to persisted per-user model settings.",
     )
     servicenow_enabled: bool = Field(
         default=False,

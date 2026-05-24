@@ -41,6 +41,7 @@ import reflex as rx
 
 from ..agent import AgentContext, run_agent_streaming
 from ..config import AppSettings
+from .auth import get_session_by_cookie, load_user_model_settings, save_user_model_settings
 from ..ui_workflows import (
     apply_agile_labels,
     apply_agile_relationships,
@@ -134,7 +135,12 @@ class AppState(rx.State):
     input_disabled: bool = False
 
     # ---- Settings ----
-    github_token: str = ""
+    authenticated: bool = False
+    auth_status: str = ""
+    github_login: str = ""
+    github_name: str = ""
+    github_orgs: str = ""
+    session_expires_at: str = ""
     openai_key: str = ""
     openai_base_url: str = ""
     agent_model: str = "gpt-4o"
@@ -215,6 +221,8 @@ class AppState(rx.State):
     agile_open_issues_status: str = ""
 
     # ---- Backend-only (not sent to frontend) ----
+    _github_token: str = ""
+    _github_user_id: str = ""
     _pending_result: Any = None
     _conversation_history: list = []
     _agile_result: Any = None
@@ -226,13 +234,12 @@ class AppState(rx.State):
     def on_load(self) -> None:
         """Populate settings from environment / .env on first load."""
         settings = AppSettings()
-        if settings.github_token:
-            self.github_token = settings.github_token
-        if settings.openai_api_key:
+        self._hydrate_auth_session(settings)
+        if not self.openai_key and settings.openai_api_key:
             self.openai_key = settings.openai_api_key
-        if settings.openai_base_url:
+        if not self.openai_base_url and settings.openai_base_url:
             self.openai_base_url = settings.openai_base_url
-        if settings.agent_model:
+        if not self.agent_model and settings.agent_model:
             self.agent_model = settings.agent_model
         self.servicenow_enabled = bool(settings.servicenow_enabled)
         if settings.servicenow_url:
@@ -272,6 +279,35 @@ class AppState(rx.State):
             if not self.requirements_milestones_repo:
                 self.requirements_milestones_repo = repo_value
 
+    def _hydrate_auth_session(self, settings: AppSettings) -> None:
+        cookie_header = str(getattr(self.router.headers, "cookie", "") or "")
+        session = get_session_by_cookie(cookie_header, settings)
+        if session is None:
+            self.authenticated = False
+            self.auth_status = "Sign in with GitHub to enable workflow actions."
+            self.github_login = ""
+            self.github_name = ""
+            self.github_orgs = ""
+            self.session_expires_at = ""
+            self._github_token = ""
+            self._github_user_id = ""
+            return
+        self.authenticated = True
+        self.auth_status = "Authenticated"
+        self.github_login = session.github_login
+        self.github_name = session.github_name
+        self.github_orgs = ", ".join(session.github_orgs)
+        self.session_expires_at = session.expires_at.isoformat(timespec="seconds")
+        self._github_token = session.github_token
+        self._github_user_id = session.github_user_id
+        persisted = load_user_model_settings(session.github_user_id, settings)
+        if persisted.get("openai_key") is not None:
+            self.openai_key = persisted.get("openai_key", "")
+        if persisted.get("openai_base_url") is not None:
+            self.openai_base_url = persisted.get("openai_base_url", "")
+        if persisted.get("agent_model"):
+            self.agent_model = persisted["agent_model"]
+
     # ------------------------------------------------------------------ #
     # Settings sidebar
     # ------------------------------------------------------------------ #
@@ -279,17 +315,17 @@ class AppState(rx.State):
     def toggle_settings(self) -> None:
         self.settings_open = not self.settings_open
 
-    def set_github_token(self, value: str) -> None:
-        self.github_token = value
-
     def set_openai_key(self, value: str) -> None:
         self.openai_key = value
+        self._persist_model_settings_if_authenticated()
 
     def set_openai_base_url(self, value: str) -> None:
         self.openai_base_url = value
+        self._persist_model_settings_if_authenticated()
 
     def set_agent_model(self, value: str) -> None:
         self.agent_model = value
+        self._persist_model_settings_if_authenticated()
 
     def set_owner(self, value: str) -> None:
         self.owner = value
@@ -323,6 +359,25 @@ class AppState(rx.State):
 
     def set_input_value(self, value: str) -> None:
         self.input_value = value
+
+    def _persist_model_settings_if_authenticated(self) -> None:
+        if not self._github_user_id:
+            return
+        save_user_model_settings(
+            self._github_user_id,
+            {
+                "openai_key": self.openai_key,
+                "openai_base_url": self.openai_base_url,
+                "agent_model": self.agent_model,
+            },
+        )
+
+    def _require_github_token(self) -> Optional[str]:
+        token = self._github_token.strip()
+        if token:
+            return token
+        self.auth_status = "❌ Sign in with GitHub to continue."
+        return None
 
     # ------------------------------------------------------------------ #
     # Workflow helpers
@@ -439,11 +494,15 @@ class AppState(rx.State):
             return default
 
     async def generate_summary(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.summary_status = "❌ Sign in with GitHub to generate a summary."
+            return
         self.summary_status = "Working…"
         self.summary_output = ""
         yield
         output, status = summarize_activity(
-            self.github_token,
+            token,
             self.openai_key,
             self.agent_model,
             self.openai_base_url,
@@ -460,10 +519,14 @@ class AppState(rx.State):
         yield
 
     async def create_milestone_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.milestone_create_result = "❌ Sign in with GitHub to create milestones."
+            return
         self.milestone_create_result = "Working…"
         yield
         self.milestone_create_result = create_milestone(
-            self.github_token,
+            token,
             self.milestone_repo,
             self.milestone_title,
             self.milestone_description,
@@ -473,30 +536,42 @@ class AppState(rx.State):
         yield
 
     async def create_queued_milestones_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.milestone_create_result = "❌ Sign in with GitHub to create milestones."
+            return
         self.milestone_create_result = "Working…"
         yield
         self.milestone_create_result, _ = create_milestones_batch(
-            self.github_token,
+            token,
             self.milestone_repo,
             self.milestone_queue_text,
         )
         yield
 
     async def list_milestones_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.milestone_list_output = "❌ Sign in with GitHub to list milestones."
+            return
         self.milestone_list_output = "Working…"
         yield
         self.milestone_list_output = list_milestones(
-            self.github_token,
+            token,
             self.milestone_list_repo,
             self.milestone_list_state,
         )
         yield
 
     async def run_servicenow_sync(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.sync_result = "❌ Sign in with GitHub to run ServiceNow sync."
+            return
         self.sync_result = "Working…"
         yield
         self.sync_result = sync_servicenow(
-            self.github_token,
+            token,
             self.sync_repo,
             self.servicenow_url,
             self.servicenow_user,
@@ -511,10 +586,14 @@ class AppState(rx.State):
         yield
 
     async def fetch_requirements_text(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.requirements_fetch_status = "❌ Sign in with GitHub to fetch requirements."
+            return
         self.requirements_fetch_status = "Working…"
         yield
         text, status = fetch_requirements_from_repo(
-            self.github_token,
+            token,
             self.requirements_repo,
             self.requirements_path,
         )
@@ -527,11 +606,15 @@ class AppState(rx.State):
         yield
 
     async def parse_requirements_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.requirements_status = "❌ Sign in with GitHub to parse requirements."
+            return
         self.requirements_status = "Working…"
         self.submit_status = ""
         yield
         rows, status = parse_requirements(
-            self.github_token,
+            token,
             self.openai_key,
             self.agent_model,
             self.openai_base_url,
@@ -547,11 +630,15 @@ class AppState(rx.State):
         yield
 
     async def seed_requirements_milestones(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.requirements_milestone_status = "❌ Sign in with GitHub to seed milestones."
+            return
         self.requirements_milestone_status = "Working…"
         yield
         target_repo = (self.requirements_milestones_repo or self.requirements_repo).strip()
         status, _ = create_milestones_batch(
-            self.github_token,
+            token,
             target_repo,
             self.milestone_queue_text,
         )
@@ -563,10 +650,14 @@ class AppState(rx.State):
         yield
 
     async def submit_requirement_drafts(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.submit_status = "❌ Sign in with GitHub to submit issues."
+            return
         self.submit_status = "Working…"
         yield
         self.submit_status = submit_issues(
-            self.github_token,
+            token,
             self.submit_repo,
             self.submit_milestone_override,
             self._draft_rows(),
@@ -574,11 +665,15 @@ class AppState(rx.State):
         yield
 
     async def list_submit_open_issues_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.submit_open_issues_status = "❌ Sign in with GitHub to list issues."
+            return
         self.submit_open_issues_status = "Working…"
         self.submit_open_issues_markdown = ""
         yield
         markdown, status = list_open_issues_for_repo(
-            self.github_token,
+            token,
             self.submit_repo,
         )
         self.submit_open_issues_markdown = markdown
@@ -586,6 +681,10 @@ class AppState(rx.State):
         yield
 
     async def run_agile_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_status = "❌ Sign in with GitHub to run agile planning."
+            return
         self.agile_status = "Working…"
         self.agile_apply_status = ""
         self.agile_dependencies_markdown = ""
@@ -600,7 +699,7 @@ class AppState(rx.State):
         self._agile_result = None
         yield
         deps_md, plan_md, status = run_agile_planner(
-            self.github_token,
+            token,
             self.openai_key,
             self.agent_model,
             self.openai_base_url,
@@ -613,7 +712,7 @@ class AppState(rx.State):
         self.agile_plan_markdown = plan_md
         self.agile_status = status
         self._agile_result = run_agile_planner_state(
-            self.github_token,
+            token,
             self.openai_key,
             self.agent_model,
             self.openai_base_url,
@@ -625,10 +724,14 @@ class AppState(rx.State):
         yield
 
     async def apply_agile_relationships_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_apply_status = "❌ Sign in with GitHub to apply relationships."
+            return
         self.agile_apply_status = "Working…"
         yield
         self.agile_apply_status = apply_agile_relationships(
-            self.github_token,
+            token,
             self.agile_repo,
             False,
             self._agile_result,
@@ -636,10 +739,14 @@ class AppState(rx.State):
         yield
 
     async def apply_agile_labels_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_apply_status = "❌ Sign in with GitHub to apply labels."
+            return
         self.agile_apply_status = "Working…"
         yield
         self.agile_apply_status = apply_agile_labels(
-            self.github_token,
+            token,
             self.agile_repo,
             False,
             self._agile_result,
@@ -647,11 +754,15 @@ class AppState(rx.State):
         yield
 
     async def read_agile_project_board_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_project_board_status = "❌ Sign in with GitHub to read project board."
+            return
         self.agile_project_board_status = "Working…"
         self.agile_project_board_markdown = ""
         yield
         markdown, status = read_agile_project_board(
-            self.github_token,
+            token,
             self.agile_repo,
             self._safe_int(self.agile_project_number, 0, min_value=0),
             self.agile_project_status_field,
@@ -663,10 +774,14 @@ class AppState(rx.State):
         yield
 
     async def update_agile_project_status_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_project_board_status = "❌ Sign in with GitHub to update project status."
+            return
         self.agile_project_board_status = "Working…"
         yield
         self.agile_project_board_status = update_agile_project_status(
-            self.github_token,
+            token,
             self.agile_repo,
             self._safe_int(self.agile_project_number, 0, min_value=0),
             self._safe_int(self.agile_project_issue_number, 0, min_value=0),
@@ -676,11 +791,15 @@ class AppState(rx.State):
         yield
 
     async def list_agile_repositories_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_context_status = "❌ Sign in with GitHub to list repositories."
+            return
         self.agile_context_status = "Working…"
         self.agile_repos_markdown = ""
         yield
         markdown, status = list_repositories_for_owner(
-            self.github_token,
+            token,
             self.agile_repo,
         )
         self.agile_repos_markdown = markdown
@@ -688,11 +807,15 @@ class AppState(rx.State):
         yield
 
     async def list_agile_projects_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_context_status = "❌ Sign in with GitHub to list projects."
+            return
         self.agile_context_status = "Working…"
         self.agile_projects_markdown = ""
         yield
         markdown, status = list_projects_for_target(
-            self.github_token,
+            token,
             self.agile_repo,
         )
         self.agile_projects_markdown = markdown
@@ -700,21 +823,29 @@ class AppState(rx.State):
         yield
 
     async def create_agile_project_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_context_status = "❌ Sign in with GitHub to create a project."
+            return
         self.agile_context_status = "Working…"
         yield
         self.agile_context_status = create_project_for_owner(
-            self.github_token,
+            token,
             self.agile_repo,
             self.agile_new_project_title,
         )
         yield
 
     async def list_agile_open_issues_workflow(self) -> None:
+        token = self._require_github_token()
+        if not token:
+            self.agile_open_issues_status = "❌ Sign in with GitHub to list open issues."
+            return
         self.agile_open_issues_status = "Working…"
         self.agile_open_issues_markdown = ""
         yield
         markdown, status = list_open_issues_for_repo(
-            self.github_token,
+            token,
             self.agile_repo,
         )
         self.agile_open_issues_markdown = markdown
@@ -729,7 +860,7 @@ class AppState(rx.State):
         return AgentContext(
             owner=self.owner,
             repo=self.repo,
-            github_token=self.github_token,
+            github_token=self._github_token,
             openai_api_key=self.openai_key,
             openai_base_url=self.openai_base_url,
             model=self.agent_model,
@@ -754,6 +885,18 @@ class AppState(rx.State):
         """Handle the user submitting a chat message (async streaming)."""
         message = self.input_value.strip()
         if not message or self.is_thinking:
+            return
+        if not self._require_github_token():
+            self._append(
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    role="error",
+                    content="Sign in with GitHub from Settings before using the agent.",
+                    is_error=True,
+                )
+            )
+            self.input_value = ""
+            yield
             return
 
         self.input_value = ""

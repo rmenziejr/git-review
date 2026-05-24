@@ -21,18 +21,23 @@ from git_review.agent_tools import (
     AgentContext,
     ALL_TOOLS,
     SERVICENOW_TOOLS,
+    add_issue_comment,
+    add_pull_request_comment,
     agile_plan,
     apply_servicenow_sync,
+    compare_branches,
     create_draft_pr,
     create_issue_draft,
     get_tools_for_context,
     get_issue,
+    get_pull_request,
     list_projects,
     list_pull_requests,
     list_repos,
     preview_servicenow_sync,
     push_issue_draft,
     read_project_status_board,
+    read_file_at_ref,
     ready_pr_for_review,
     search_issues,
     create_project,
@@ -161,8 +166,10 @@ def test_get_tools_for_context_includes_servicenow_when_enabled() -> None:
 WRITE_TOOLS = [
     push_issue_draft,
     update_issue,
+    add_issue_comment,
     create_draft_pr,
     update_pull_request,
+    add_pull_request_comment,
     ready_pr_for_review,
     create_project,
     update_project_status,
@@ -174,6 +181,9 @@ READ_TOOLS = [
     search_issues,
     get_issue,
     list_pull_requests,
+    get_pull_request,
+    compare_branches,
+    read_file_at_ref,
     create_issue_draft,
     agile_plan,
     read_project_status_board,
@@ -205,14 +215,19 @@ def test_all_tools_list_complete() -> None:
         "search_issues",
         "get_issue",
         "list_pull_requests",
+        "get_pull_request",
+        "compare_branches",
+        "read_file_at_ref",
         "create_issue_draft",
         "agile_plan",
         "read_project_status_board",
         "create_project",
         "push_issue_draft",
         "update_issue",
+        "add_issue_comment",
         "create_draft_pr",
         "update_pull_request",
+        "add_pull_request_comment",
         "ready_pr_for_review",
         "update_project_status",
     }
@@ -357,6 +372,95 @@ async def test_list_pull_requests_returns_json() -> None:
     assert prs[1]["draft"] is True
 
 
+@pytest.mark.asyncio
+async def test_get_pull_request_returns_full_details() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = '{"owner": "myorg", "repo": "myrepo", "pull_number": 10}'
+    tc = _make_tool_ctx(agent_ctx, "get_pull_request", args)
+    mock_gh = MagicMock()
+    mock_gh.get_pull_request.return_value = {
+        "number": 10,
+        "title": "feat: new endpoint",
+        "state": "open",
+        "draft": False,
+        "html_url": "https://github.com/a/b/pull/10",
+        "body": "PR body",
+        "base": {"ref": "main"},
+        "head": {"ref": "feature/new-endpoint"},
+        "changed_files": 3,
+        "commits": 2,
+        "additions": 50,
+        "deletions": 10,
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await get_pull_request.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["number"] == 10
+    assert data["base_branch"] == "main"
+    assert data["head_branch"] == "feature/new-endpoint"
+    mock_gh.get_pull_request.assert_called_once_with("myorg", "myrepo", 10)
+
+
+@pytest.mark.asyncio
+async def test_compare_branches_returns_json() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = '{"owner":"myorg","repo":"myrepo","base":"main","head":"feature/x"}'
+    tc = _make_tool_ctx(agent_ctx, "compare_branches", args)
+    mock_gh = MagicMock()
+    mock_gh.compare_branches.return_value = {
+        "status": "ahead",
+        "ahead_by": 2,
+        "behind_by": 0,
+        "total_commits": 2,
+        "files": [
+            {
+                "filename": "git_review/agent_tools.py",
+                "status": "modified",
+                "additions": 5,
+                "deletions": 1,
+                "changes": 6,
+                "patch": "@@ ...",
+            }
+        ],
+        "commits": [
+            {
+                "sha": "abc123",
+                "html_url": "https://github.com/a/b/commit/abc123",
+                "commit": {"message": "feat: add tool\n\nmore"},
+            }
+        ],
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await compare_branches.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["status"] == "ahead"
+    assert data["files"][0]["filename"] == "git_review/agent_tools.py"
+    assert data["commits"][0]["message"] == "feat: add tool"
+    mock_gh.compare_branches.assert_called_once_with("myorg", "myrepo", "main", "feature/x")
+
+
+@pytest.mark.asyncio
+async def test_read_file_at_ref_returns_json() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = '{"owner":"myorg","repo":"myrepo","path":"README.md","ref":"feature/x"}'
+    tc = _make_tool_ctx(agent_ctx, "read_file_at_ref", args)
+    mock_gh = MagicMock()
+    mock_gh.get_file_content.return_value = "# hello"
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await read_file_at_ref.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["path"] == "README.md"
+    assert data["ref"] == "feature/x"
+    assert data["content"] == "# hello"
+    mock_gh.get_file_content.assert_called_once_with("myorg", "myrepo", "README.md", ref="feature/x")
+
+
 # ---------------------------------------------------------------------------
 # Read tool: create_issue_draft
 # ---------------------------------------------------------------------------
@@ -489,6 +593,30 @@ async def test_update_issue_patches_only_provided_fields() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_add_issue_comment_calls_client() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = json.dumps({
+        "owner": "myorg",
+        "repo": "myrepo",
+        "issue_number": 3,
+        "body": "Looks good",
+    })
+    tc = _make_tool_ctx(agent_ctx, "add_issue_comment", args)
+    mock_gh = MagicMock()
+    mock_gh.create_issue_comment.return_value = {
+        "id": 111,
+        "html_url": "https://github.com/a/b/issues/3#issuecomment-111",
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await add_issue_comment.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["id"] == 111
+    mock_gh.create_issue_comment.assert_called_once_with("myorg", "myrepo", 3, "Looks good")
+
+
 # ---------------------------------------------------------------------------
 # Write tool: create_draft_pr
 # ---------------------------------------------------------------------------
@@ -558,6 +686,32 @@ async def test_update_pull_request_patches_fields() -> None:
     assert data["number"] == 10
     mock_gh.update_pull_request.assert_called_once_with(
         "myorg", "myrepo", 10, title="Updated title"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_pull_request_comment_calls_client() -> None:
+    agent_ctx = _make_agent_ctx()
+    args = json.dumps({
+        "owner": "myorg",
+        "repo": "myrepo",
+        "pull_number": 10,
+        "body": "Please sync with issue #123",
+    })
+    tc = _make_tool_ctx(agent_ctx, "add_pull_request_comment", args)
+    mock_gh = MagicMock()
+    mock_gh.create_pull_request_comment.return_value = {
+        "id": 222,
+        "html_url": "https://github.com/a/b/pull/10#issuecomment-222",
+    }
+
+    with patch("git_review.agent_tools.GitHubClient", return_value=mock_gh):
+        result = await add_pull_request_comment.on_invoke_tool(tc, args)
+
+    data = json.loads(result)
+    assert data["id"] == 222
+    mock_gh.create_pull_request_comment.assert_called_once_with(
+        "myorg", "myrepo", 10, "Please sync with issue #123"
     )
 
 

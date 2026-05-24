@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 from starlette.applications import Starlette
@@ -57,23 +59,20 @@ def test_github_callback_creates_server_session_and_cookie() -> None:
     login_response = client.get("/auth/github/login", follow_redirects=False)
     state = parse_qs(urlparse(login_response.headers["location"]).query)["state"][0]
 
-    original_exchange = auth._exchange_code_for_token
-    original_build = auth._build_auth_session
-    try:
-        auth._exchange_code_for_token = lambda code, request, cfg: "gho_test_token"
-        auth._build_auth_session = lambda token, ttl: auth.AuthSession(
+    with patch.object(auth, "_exchange_code_for_token", return_value="gho_test_token"), patch.object(
+        auth,
+        "_build_auth_session",
+        return_value=auth.AuthSession(
             session_id="session-123",
-            github_token=token,
+            github_token="gho_test_token",
             github_user_id="42",
             github_login="octocat",
             github_name="The Octocat",
             github_orgs=["acme"],
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
-        )
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=600),
+        ),
+    ):
         response = client.get(f"/auth/github/callback?code=test-code&state={state}", follow_redirects=False)
-    finally:
-        auth._exchange_code_for_token = original_exchange
-        auth._build_auth_session = original_build
 
     assert response.status_code == 302
     assert response.headers["location"] == "/"
@@ -100,7 +99,7 @@ def test_get_session_by_cookie_expires_stale_session() -> None:
     assert "expired" not in auth._sessions
 
 
-def test_user_model_settings_are_isolated_per_user(tmp_path) -> None:
+def test_user_model_settings_are_isolated_per_user(tmp_path: Path) -> None:
     settings = _settings(agent_user_settings_path=str(tmp_path / "user-settings.json"))
     auth.save_user_model_settings(
         "u1",
@@ -124,8 +123,13 @@ def test_user_model_settings_are_isolated_per_user(tmp_path) -> None:
 
 def test_state_requires_authentication_when_no_session() -> None:
     state = AppState(_reflex_internal_init=True)
+    state.openai_key = "sk-temp"
+    state.openai_base_url = "https://example"
+    state._hydrate_auth_session(_settings())
 
     token = state._require_github_token()
 
     assert token is None
     assert "Sign in with GitHub" in state.auth_status
+    assert state.openai_key == ""
+    assert state.openai_base_url == ""

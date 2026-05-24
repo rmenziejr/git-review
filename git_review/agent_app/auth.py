@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 from starlette.requests import Request
@@ -87,6 +87,11 @@ def get_cookie_value(cookie_header: str, cookie_name: str) -> str:
 def _build_callback_url(request: Request, settings: AppSettings) -> str:
     callback_path = settings.github_oauth_callback_path or "/auth/github/callback"
     if callback_path.startswith("http://") or callback_path.startswith("https://"):
+        configured = urlparse(callback_path)
+        request_port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        configured_port = configured.port or (443 if configured.scheme == "https" else 80)
+        if configured.hostname != request.url.hostname or configured_port != request_port:
+            raise ValueError("GITHUB_OAUTH_CALLBACK_PATH host must match the current app host.")
         return callback_path
     if not callback_path.startswith("/"):
         callback_path = "/" + callback_path
@@ -200,8 +205,14 @@ def handle_github_oauth_callback(request: Request, settings: Optional[AppSetting
     query_state = str(request.query_params.get("state") or "").strip()
     code = str(request.query_params.get("code") or "").strip()
     cookie_state = request.cookies.get(_OAUTH_STATE_COOKIE, "")
-    if not query_state or not code or not cookie_state or cookie_state != query_state:
-        return PlainTextResponse("Invalid OAuth callback state.", status_code=400)
+    if not code:
+        return PlainTextResponse("Missing OAuth code.", status_code=400)
+    if not query_state:
+        return PlainTextResponse("Missing OAuth state.", status_code=400)
+    if not cookie_state:
+        return PlainTextResponse("Missing OAuth state cookie.", status_code=400)
+    if cookie_state != query_state:
+        return PlainTextResponse("OAuth state mismatch.", status_code=400)
 
     with _STATE_LOCK:
         state_expiry = _oauth_states.pop(query_state, None)
@@ -211,7 +222,7 @@ def handle_github_oauth_callback(request: Request, settings: Optional[AppSetting
     try:
         github_token = _exchange_code_for_token(code, request, settings)
         session = _build_auth_session(github_token, settings.agent_session_ttl_seconds)
-    except Exception as exc:  # noqa: BLE001
+    except (requests.RequestException, ValueError) as exc:
         return PlainTextResponse(f"OAuth login failed: {exc}", status_code=400)
 
     with _SESSION_LOCK:
@@ -313,6 +324,7 @@ def save_user_model_settings(
         }
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        tmp_path.chmod(0o600)
         tmp_path.replace(path)
 
 

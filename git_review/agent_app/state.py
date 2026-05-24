@@ -235,11 +235,11 @@ class AppState(rx.State):
         """Populate settings from environment / .env on first load."""
         settings = AppSettings()
         self._hydrate_auth_session(settings)
-        if not self.openai_key and settings.openai_api_key:
+        if self.authenticated and not self.openai_key and settings.openai_api_key:
             self.openai_key = settings.openai_api_key
-        if not self.openai_base_url and settings.openai_base_url:
+        if self.authenticated and not self.openai_base_url and settings.openai_base_url:
             self.openai_base_url = settings.openai_base_url
-        if not self.agent_model and settings.agent_model:
+        if self.authenticated and not self.agent_model and settings.agent_model:
             self.agent_model = settings.agent_model
         self.servicenow_enabled = bool(settings.servicenow_enabled)
         if settings.servicenow_url:
@@ -280,7 +280,8 @@ class AppState(rx.State):
                 self.requirements_milestones_repo = repo_value
 
     def _hydrate_auth_session(self, settings: AppSettings) -> None:
-        cookie_header = str(getattr(self.router.headers, "cookie", "") or "")
+        headers = getattr(self.router, "headers", None)
+        cookie_header = str(getattr(headers, "cookie", "") or "")
         session = get_session_by_cookie(cookie_header, settings)
         if session is None:
             self.authenticated = False
@@ -291,6 +292,8 @@ class AppState(rx.State):
             self.session_expires_at = ""
             self._github_token = ""
             self._github_user_id = ""
+            self.openai_key = ""
+            self.openai_base_url = ""
             return
         self.authenticated = True
         self.auth_status = "Authenticated"
@@ -305,8 +308,8 @@ class AppState(rx.State):
             self.openai_key = persisted.get("openai_key", "")
         if persisted.get("openai_base_url") is not None:
             self.openai_base_url = persisted.get("openai_base_url", "")
-        if persisted.get("agent_model"):
-            self.agent_model = persisted["agent_model"]
+        if persisted.get("agent_model") is not None:
+            self.agent_model = persisted.get("agent_model", "")
 
     # ------------------------------------------------------------------ #
     # Settings sidebar
@@ -370,6 +373,7 @@ class AppState(rx.State):
                 "openai_base_url": self.openai_base_url,
                 "agent_model": self.agent_model,
             },
+            AppSettings(),
         )
 
     def _require_github_token(self) -> Optional[str]:

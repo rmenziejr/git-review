@@ -37,7 +37,7 @@ from .state import AppState, RequirementDraft
 
 _NAV_ITEMS = [
     ("/", "Overview"),
-    ("/agent", "Agent"),
+    ("/agent", "GitHub Agent"),
     ("/activity", "Activity"),
     ("/milestones", "Milestones"),
     ("/requirements", "Requirements"),
@@ -45,67 +45,174 @@ _NAV_ITEMS = [
     ("/agile", "Agile"),
 ]
 
+SHELL_BG = "linear-gradient(180deg, #f5f8fc 0%, #eef3fa 100%)"
+SURFACE_BG = "rgba(255, 255, 255, 0.96)"
+SURFACE_BORDER = "1px solid rgba(20, 53, 89, 0.10)"
+SURFACE_SHADOW = "0 10px 30px rgba(16, 35, 56, 0.08)"
+RAIL_BG = "rgba(250, 252, 255, 0.92)"
 
-def _nav_links() -> rx.Component:
-    return rx.hstack(
-        *[
+
+def _is_active_route(route: str) -> rx.Var:
+    return AppState.router.page.path == route
+
+
+def _nav_item(route: str, label: str) -> rx.Component:
+    active = _is_active_route(route)
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        rx.tooltip(
             rx.link(
-                rx.button(label, variant="soft", size="2", color_scheme="gray"),
+                rx.button(
+                    rx.box(
+                        width=rx.cond(active, "0.72rem", "0.6rem"),
+                        height=rx.cond(active, "0.72rem", "0.6rem"),
+                        border_radius="999px",
+                        background_color=rx.cond(
+                            active, rx.color("indigo", 10), rx.color("gray", 8)
+                        ),
+                    ),
+                    variant=rx.cond(active, "solid", "soft"),
+                    size="3",
+                    color_scheme=rx.cond(active, "indigo", "gray"),
+                    width="100%",
+                    height="2.3rem",
+                    padding="0",
+                    box_shadow=rx.cond(
+                        active, "0 6px 14px rgba(55, 85, 160, 0.22)", "none"
+                    ),
+                ),
                 href=route,
                 underline="none",
-            )
-            for route, label in _NAV_ITEMS
-        ],
+                width="100%",
+            ),
+            content=label,
+        ),
+        rx.link(
+            rx.button(
+                rx.hstack(
+                    rx.box(
+                        width="0.45rem",
+                        height="0.45rem",
+                        border_radius="999px",
+                        background_color=rx.cond(
+                            active, rx.color("indigo", 10), rx.color("gray", 7)
+                        ),
+                    ),
+                    rx.text(label, size="2", weight=rx.cond(active, "bold", "medium")),
+                    spacing="3",
+                    align_items="center",
+                    width="100%",
+                ),
+                variant=rx.cond(active, "solid", "soft"),
+                size="2",
+                color_scheme=rx.cond(active, "indigo", "gray"),
+                width="100%",
+                justify="start",
+                padding_x="0.7rem",
+                box_shadow=rx.cond(
+                    active, "0 8px 16px rgba(55, 85, 160, 0.16)", "none"
+                ),
+            ),
+            href=route,
+            underline="none",
+            width="100%",
+        ),
+    )
+
+
+def _sidebar_nav() -> rx.Component:
+    return rx.vstack(
+        *[_nav_item(route, label) for route, label in _NAV_ITEMS],
         spacing="2",
-        wrap="wrap",
+        width="100%",
+        align_items="stretch",
+    )
+
+
+def _sidebar() -> rx.Component:
+    return rx.box(
+        rx.vstack(
+            _sidebar_nav(),
+            spacing="3",
+            width="100%",
+            align_items="stretch",
+        ),
+        width=rx.cond(AppState.sidebar_collapsed, "0rem", "15rem"),
+        min_width=rx.cond(AppState.sidebar_collapsed, "0rem", "15rem"),
+        transition="width 0.22s ease",
+        border_right=rx.cond(AppState.sidebar_collapsed, "none", SURFACE_BORDER),
+        background=RAIL_BG,
+        padding=rx.cond(AppState.sidebar_collapsed, "0rem", "0.9rem"),
+        align_self="stretch",
+        position="sticky",
+        top="62px",
+        height="calc(100vh - 62px)",
+        overflow="hidden",
+        opacity=rx.cond(AppState.sidebar_collapsed, 0, 1),
+        pointer_events=rx.cond(AppState.sidebar_collapsed, "none", "auto"),
+        backdrop_filter="blur(6px)",
     )
 
 
 def _top_bar(*actions: rx.Component) -> rx.Component:
     return rx.box(
-        rx.vstack(
+        rx.hstack(
             rx.hstack(
+                rx.icon_button(
+                    rx.icon(
+                        rx.cond(AppState.sidebar_collapsed, "menu", "panel_left_close"),
+                        size=15,
+                    ),
+                    on_click=AppState.toggle_sidebar,
+                    size="3",
+                    variant="soft",
+                    color_scheme="gray",
+                    border_radius="10px",
+                ),
+                rx.icon("git-branch", size=18, color=rx.color("indigo", 10)),
                 rx.hstack(
-                    rx.icon("git-branch", size=20, color=rx.color("indigo", 10)),
-                    rx.vstack(
-                        rx.heading("git-review", size="5"),
-                        rx.text(
-                            "Production workflows for reviews, planning, and delivery.",
-                            size="2",
-                            color_scheme="gray",
-                        ),
-                        spacing="1",
-                        align_items="start",
+                    rx.heading("git-review", size="3"),
+                    rx.text(
+                        "Plan, ship, and sync delivery work from one workspace.",
+                        size="1",
+                        color_scheme="gray",
+                        display=rx.breakpoints(initial="none", lg="block"),
+                        white_space="nowrap",
+                        overflow="hidden",
+                        text_overflow="ellipsis",
                     ),
                     spacing="3",
                     align_items="center",
+                    min_width="0",
                 ),
-                rx.spacer(),
-                rx.hstack(
-                    *actions,
-                    rx.icon_button(
-                        rx.icon("settings", size=18),
-                        on_click=AppState.toggle_settings,
-                        size="2",
-                        variant="ghost",
-                        color_scheme="gray",
-                    ),
-                    spacing="2",
-                ),
-                width="100%",
+                spacing="3",
                 align_items="center",
+                min_width="0",
             ),
-            _nav_links(),
-            spacing="4",
+            rx.spacer(),
+            rx.hstack(
+                *actions,
+                rx.icon_button(
+                    rx.icon("settings", size=18),
+                    on_click=AppState.toggle_settings,
+                    size="2",
+                    variant="ghost",
+                    color_scheme="gray",
+                ),
+                spacing="2",
+            ),
             width="100%",
+            align_items="center",
         ),
         position="sticky",
         top="0",
         z_index="20",
-        background_color=rx.color("gray", 1),
-        border_bottom=f"1px solid {rx.color('gray', 4)}",
-        padding_x="6",
-        padding_y="4",
+        background_color="rgba(255, 255, 255, 0.98)",
+        border_bottom="1px solid rgba(20, 53, 89, 0.15)",
+        box_shadow="0 8px 18px rgba(16, 35, 56, 0.08)",
+        padding_x="5",
+        padding_y="2.5",
+        backdrop_filter="blur(8px)",
     )
 
 
@@ -114,34 +221,50 @@ def _page_shell(
     description: str,
     *children: rx.Component,
     actions: list[rx.Component] | None = None,
+    content_padding_top: str = "5",
+    content_padding_bottom: str = "7",
 ) -> rx.Component:
     return rx.box(
         _top_bar(*(actions or [])),
-        rx.box(
-            rx.vstack(
+        rx.hstack(
+            _sidebar(),
+            rx.box(
                 rx.vstack(
-                    rx.heading(title, size="7"),
-                    rx.text(description, size="3", color_scheme="gray"),
-                    spacing="2",
-                    align_items="start",
+                    rx.hstack(
+                        rx.heading(title, size="4"),
+                        rx.text(
+                            description,
+                            size="1",
+                            color_scheme="gray",
+                            white_space="nowrap",
+                            overflow="hidden",
+                            text_overflow="ellipsis",
+                        ),
+                        spacing="3",
+                        align_items="center",
+                        min_width="0",
+                        width="100%",
+                    ),
+                    *children,
+                    spacing="4",
                     width="100%",
+                    align_items="start",
                 ),
-                *children,
-                spacing="6",
                 width="100%",
-                align_items="start",
+                max_width="1160px",
+                margin="0 auto",
+                padding_x="5",
+                padding_top=content_padding_top,
+                padding_bottom=content_padding_bottom,
             ),
             width="100%",
-            max_width="1180px",
-            margin="0 auto",
-            padding_x="6",
-            padding_y="6",
+            align_items="start",
         ),
         settings_panel(),
         width="100%",
         min_height="100vh",
-        background_color=rx.color("gray", 2),
-        font_family="Inter, system-ui, sans-serif",
+        background=SHELL_BG,
+        font_family="Manrope, 'Segoe UI', sans-serif",
     )
 
 
@@ -165,26 +288,78 @@ def _section_card(
             align_items="start",
         ),
         width="100%",
+        border_radius="12px",
+        background=SURFACE_BG,
+        border=SURFACE_BORDER,
+        box_shadow=SURFACE_SHADOW,
     )
 
 
-def _labeled_field(label: str, control: rx.Component, help_text: str = "") -> rx.Component:
+def _labeled_field(
+    label: rx.Var | str,
+    control: rx.Component,
+    help_text: rx.Var | str | None = None,
+) -> rx.Component:
     children = [
         rx.text(label, size="2", weight="medium"),
         control,
     ]
-    if help_text:
+    if help_text is not None:
         children.append(rx.text(help_text, size="1", color_scheme="gray"))
     return rx.vstack(*children, spacing="2", width="100%", align_items="start")
 
 
-def _choice_button(field_name: str, value: str, label: str, color_scheme: str = "indigo") -> rx.Component:
+def _choice_button(
+    field_name: str, value: str, label: str, color_scheme: str = "indigo"
+) -> rx.Component:
     return rx.button(
         label,
         size="2",
         variant=rx.cond(getattr(AppState, field_name) == value, "solid", "outline"),
-        color_scheme=rx.cond(getattr(AppState, field_name) == value, color_scheme, "gray"),
+        color_scheme=rx.cond(
+            getattr(AppState, field_name) == value, color_scheme, "gray"
+        ),
         on_click=AppState.set_workflow_field(field_name, value),
+    )
+
+
+def _mode_button(
+    label: str,
+    active: rx.Var | bool,
+    on_click: rx.event.EventHandler,
+    icon: str,
+) -> rx.Component:
+    return rx.button(
+        rx.icon(icon, size=14),
+        label,
+        size="2",
+        variant=rx.cond(active, "solid", "ghost"),
+        color_scheme=rx.cond(active, "indigo", "gray"),
+        on_click=on_click,
+        border_radius="6px",
+    )
+
+
+def _activity_mode_toggle() -> rx.Component:
+    return rx.hstack(
+        _mode_button(
+            "Single repo",
+            ~AppState.summary_all_repos,
+            AppState.set_workflow_field("summary_all_repos", False),
+            "git-branch",
+        ),
+        _mode_button(
+            "Owner",
+            AppState.summary_all_repos,
+            AppState.set_workflow_field("summary_all_repos", True),
+            "building-2",
+        ),
+        spacing="1",
+        padding="1",
+        border=f"1px solid {rx.color('gray', 4)}",
+        border_radius="8px",
+        background_color=rx.color("gray", 2),
+        align_items="center",
     )
 
 
@@ -196,7 +371,7 @@ def _status_block(title: str, text: rx.Var | str) -> rx.Component:
             width="100%",
             background_color="white",
             border=f"1px solid {rx.color('gray', 4)}",
-            border_radius="12px",
+            border_radius="8px",
             padding="4",
             min_height="96px",
         ),
@@ -210,11 +385,11 @@ def _markdown_block(title: str, text: rx.Var | str) -> rx.Component:
     return rx.vstack(
         rx.text(title, size="2", weight="medium"),
         rx.box(
-            rx.markdown(text),
+            rx.text(text, white_space="pre-wrap", size="2"),
             width="100%",
             background_color="white",
             border=f"1px solid {rx.color('gray', 4)}",
-            border_radius="12px",
+            border_radius="8px",
             padding="4",
             min_height="160px",
         ),
@@ -231,6 +406,45 @@ def _repo_shortcut(field_name: str) -> rx.Component:
         variant="ghost",
         color_scheme="gray",
         on_click=AppState.use_settings_repo(field_name),
+    )
+
+
+def _secondary_actions_menu(
+    trigger_label: str,
+    entries: list[tuple[rx.Var | str, rx.event.EventHandler]],
+) -> rx.Component:
+    return rx.popover.root(
+        rx.popover.trigger(
+            rx.button(
+                rx.icon("ellipsis", size=14),
+                trigger_label,
+                size="2",
+                variant="soft",
+                color_scheme="gray",
+            )
+        ),
+        rx.popover.content(
+            rx.vstack(
+                *[
+                    rx.button(
+                        entry_label,
+                        on_click=entry_action,
+                        size="1",
+                        variant="ghost",
+                        color_scheme="gray",
+                        width="100%",
+                        justify="start",
+                    )
+                    for entry_label, entry_action in entries
+                ],
+                spacing="1",
+                width="220px",
+                align_items="stretch",
+            ),
+            side="bottom",
+            align="end",
+            padding="0.35rem",
+        ),
     )
 
 
@@ -251,6 +465,9 @@ def _workflow_card(title: str, description: str, href: str) -> rx.Component:
                 align_items="start",
             ),
             width="100%",
+            background=SURFACE_BG,
+            border=SURFACE_BORDER,
+            box_shadow="0 8px 20px rgba(16, 35, 56, 0.06)",
         ),
         href=href,
         underline="none",
@@ -259,82 +476,100 @@ def _workflow_card(title: str, description: str, href: str) -> rx.Component:
 
 
 def _chat_input() -> rx.Component:
-    return rx.hstack(
-        rx.text_area(
-            value=AppState.input_value,
-            on_change=AppState.set_input_value,
-            placeholder="Ask me to list issues, plan a sprint, create a PR draft…",
-            disabled=AppState.input_disabled,
-            size="3",
-            flex="1",
-            min_rows=1,
-            max_rows=6,
-            on_key_down=rx.cond(
-                rx.Var.create("event.key === 'Enter' && !event.shiftKey"),
-                rx.prevent_default(AppState.send_message()),
-                rx.Var.create("null"),
+    return rx.form(
+        rx.box(
+            rx.hstack(
+                rx.text_area(
+                    value=AppState.input_value,
+                    on_change=AppState.set_input_value,
+                    placeholder="Ask for issue triage, sprint planning, release milestones, or PR support...",
+                    disabled=AppState.input_disabled,
+                    size="3",
+                    flex="1",
+                    min_rows=1,
+                    max_rows=6,
+                    enter_key_submit=True,
+                    border_radius="10px",
+                    background_color="white",
+                ),
+                rx.icon_button(
+                    rx.icon("send", size=18),
+                    disabled=AppState.input_disabled,
+                    size="3",
+                    color_scheme="indigo",
+                    variant="solid",
+                    type="submit",
+                    border_radius="10px",
+                ),
+                width="100%",
+                spacing="2",
+                align_items="end",
             ),
+            width="100%",
+            padding="0.45rem",
+            border_radius="12px",
+            background_color="rgba(255, 255, 255, 0.95)",
+            border=f"1px solid {rx.color('gray', 4)}",
+            box_shadow="0 4px 14px rgba(16, 35, 56, 0.08)",
         ),
-        rx.icon_button(
-            rx.icon("send", size=18),
-            on_click=AppState.send_message,
-            disabled=AppState.input_disabled,
-            size="3",
-            color_scheme="indigo",
-            variant="solid",
-        ),
+        on_submit=lambda _: AppState.send_message,
+        reset_on_submit=False,
         width="100%",
-        spacing="2",
-        align_items="end",
     )
 
 
 def _overview_page() -> rx.Component:
     return _page_shell(
         "Workspace overview",
-        "Move from discovery to execution with a single Reflex app instead of jumping between separate tools.",
+        "Run planning, execution, and sync workflows without bouncing between tools.",
         rx.vstack(
             _section_card(
                 "Recommended flow",
-                "Start with the structured workflows, then drop into the agent when you need open-ended help.",
+                "Start with guided workflows, then use the agent for analysis and follow-through.",
                 rx.vstack(
                     rx.text("1. Configure credentials and default repo in Settings."),
-                    rx.text("2. Use Activity and Agile to understand the current state."),
-                    rx.text("3. Convert requirements into issue drafts and submit them."),
-                    rx.text("4. Use the agent for follow-up analysis, issue triage, and PR work."),
+                    rx.text(
+                        "2. Use Activity and Agile to baseline current delivery status."
+                    ),
+                    rx.text(
+                        "3. Turn requirements into issue drafts and submit in batch."
+                    ),
+                    rx.text(
+                        "4. Use the agent for follow-up analysis, triage, and PR support."
+                    ),
                     spacing="2",
                     width="100%",
                     align_items="start",
                 ),
             ),
             _workflow_card(
-                "Conversational agent",
-                "Streaming chat with tool calls, reasoning, and human-in-the-loop approvals.",
+                "GitHub Agent",
+                "Streaming chat with tool calls, reasoning, and approval gates for write actions.",
                 "/agent",
             ),
             _workflow_card(
                 "Activity summary",
-                "Generate an AI summary across one repo or every repo in an org.",
+                "Generate concise activity summaries across one repo or an entire owner scope.",
                 "/activity",
             ),
             _workflow_card(
                 "Milestones",
-                "Create release milestones and review the current roadmap in one place.",
+                "Create release milestones and review roadmap status in one place.",
                 "/milestones",
             ),
             _workflow_card(
                 "Requirements to issues",
-                "Fetch or paste requirements, generate editable drafts, and submit them without leaving the page.",
+                "Fetch or paste requirements, generate editable issue drafts, then submit.",
                 "/requirements",
             ),
             _workflow_card(
                 "ServiceNow sync",
-                "Preview or apply the GitHub → ServiceNow sync with shared settings.",
+                "Preview or apply GitHub-to-ServiceNow sync using shared settings.",
                 "/servicenow",
             ),
             _workflow_card(
                 "Agile planner",
-                "Generate dependency-aware sprint plans and apply the approved changes back to GitHub.",
+                "Build dependency-aware sprint plans and apply approved updates back to GitHub.",
                 "/agile",
             ),
             spacing="4",
@@ -345,7 +580,7 @@ def _overview_page() -> rx.Component:
 
 def _agent_page() -> rx.Component:
     return _page_shell(
-        "Conversational agent",
+        "GitHub Agent",
         "Use the agent for exploratory work, issue updates, pull requests, and human-in-the-loop approvals.",
         rx.card(
             rx.vstack(
@@ -363,9 +598,13 @@ def _agent_page() -> rx.Component:
                 ),
                 spacing="4",
                 width="100%",
-                height="calc(100vh - 260px)",
+                height="calc(100dvh - 170px)",
+                min_height="0",
             ),
             width="100%",
+            border_radius="14px",
+            background_color="rgba(248, 250, 252, 0.72)",
+            box_shadow="0 8px 24px rgba(16, 35, 56, 0.08)",
         ),
         actions=[
             rx.button(
@@ -377,36 +616,53 @@ def _agent_page() -> rx.Component:
                 on_click=AppState.clear_chat,
             )
         ],
+        content_padding_top="4",
+        content_padding_bottom="2",
     )
 
 
 def _activity_page() -> rx.Component:
     return _page_shell(
         "Activity summary",
-        "Summarize repository activity with a tighter workflow and shared settings.",
+        "Generate concise activity summaries with shared repository and credential settings.",
         _section_card(
             "Summary inputs",
             "Review one repository or switch to org mode for an aggregate view.",
+            _activity_mode_toggle(),
             rx.hstack(
                 _labeled_field(
-                    "Repository or owner",
+                    rx.cond(AppState.summary_all_repos, "Owner", "Repository"),
                     rx.input(
                         value=AppState.summary_repo,
-                        on_change=lambda value: AppState.set_workflow_field("summary_repo", value),
-                        placeholder="owner/repo or owner",
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "summary_repo", value
+                        ),
+                        placeholder=rx.cond(
+                            AppState.summary_all_repos,
+                            "owner (owner/repo also works)",
+                            "owner/repo",
+                        ),
                         width="100%",
+                    ),
+                    rx.cond(
+                        AppState.summary_all_repos,
+                        "Owner mode includes all active repositories under the owner.",
+                        "Single repo mode expects owner/repo.",
                     ),
                 ),
                 _repo_shortcut("summary_repo"),
                 width="100%",
                 align_items="end",
+                spacing="3",
             ),
             rx.hstack(
                 _labeled_field(
                     "Commit author filter",
                     rx.input(
                         value=AppState.summary_author,
-                        on_change=lambda value: AppState.set_workflow_field("summary_author", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "summary_author", value
+                        ),
                         placeholder="github-username",
                         width="100%",
                     ),
@@ -415,7 +671,9 @@ def _activity_page() -> rx.Component:
                     "Days back",
                     rx.input(
                         value=AppState.summary_days,
-                        on_change=lambda value: AppState.set_workflow_field("summary_days", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "summary_days", value
+                        ),
                         placeholder="7",
                         width="100%",
                     ),
@@ -427,7 +685,9 @@ def _activity_page() -> rx.Component:
                     "Since",
                     rx.input(
                         value=AppState.summary_since,
-                        on_change=lambda value: AppState.set_workflow_field("summary_since", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "summary_since", value
+                        ),
                         placeholder="YYYY-MM-DD",
                         width="100%",
                     ),
@@ -436,7 +696,9 @@ def _activity_page() -> rx.Component:
                     "Until",
                     rx.input(
                         value=AppState.summary_until,
-                        on_change=lambda value: AppState.set_workflow_field("summary_until", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "summary_until", value
+                        ),
                         placeholder="YYYY-MM-DD",
                         width="100%",
                     ),
@@ -447,20 +709,20 @@ def _activity_page() -> rx.Component:
                 "Custom system prompt",
                 rx.text_area(
                     value=AppState.summary_prompt,
-                    on_change=lambda value: AppState.set_workflow_field("summary_prompt", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "summary_prompt", value
+                    ),
                     min_rows=4,
                     width="100%",
                 ),
             ),
             rx.hstack(
                 rx.button(
-                    rx.cond(AppState.summary_all_repos, "Owner mode enabled", "Single repo mode"),
-                    size="2",
-                    variant=rx.cond(AppState.summary_all_repos, "solid", "outline"),
-                    color_scheme=rx.cond(AppState.summary_all_repos, "indigo", "gray"),
-                    on_click=AppState.toggle_workflow_flag("summary_all_repos"),
+                    rx.icon("sparkles", size=14),
+                    "Generate summary",
+                    on_click=AppState.generate_summary,
+                    color_scheme="indigo",
                 ),
-                rx.button("Generate summary", on_click=AppState.generate_summary, color_scheme="indigo"),
                 spacing="3",
             ),
         ),
@@ -472,7 +734,7 @@ def _activity_page() -> rx.Component:
 def _milestones_page() -> rx.Component:
     return _page_shell(
         "Milestones",
-        "Queue several milestones, load defaults from the environment, and push them in one run.",
+        "Build and publish milestone plans in one structured pass.",
         _section_card(
             "Build the milestone queue",
             "Use the single-milestone form to stage entries, then create everything in one batch.",
@@ -481,7 +743,9 @@ def _milestones_page() -> rx.Component:
                     "Repository",
                     rx.input(
                         value=AppState.milestone_repo,
-                        on_change=lambda value: AppState.set_workflow_field("milestone_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "milestone_repo", value
+                        ),
                         placeholder="owner/repo",
                         width="100%",
                     ),
@@ -495,7 +759,9 @@ def _milestones_page() -> rx.Component:
                     "Title",
                     rx.input(
                         value=AppState.milestone_title,
-                        on_change=lambda value: AppState.set_workflow_field("milestone_title", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "milestone_title", value
+                        ),
                         placeholder="v1.0 Release",
                         width="100%",
                     ),
@@ -504,7 +770,9 @@ def _milestones_page() -> rx.Component:
                     "Due date",
                     rx.input(
                         value=AppState.milestone_due_on,
-                        on_change=lambda value: AppState.set_workflow_field("milestone_due_on", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "milestone_due_on", value
+                        ),
                         placeholder="YYYY-MM-DD",
                         width="100%",
                     ),
@@ -515,7 +783,9 @@ def _milestones_page() -> rx.Component:
                 "Description",
                 rx.text_area(
                     value=AppState.milestone_description,
-                    on_change=lambda value: AppState.set_workflow_field("milestone_description", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "milestone_description", value
+                    ),
                     min_rows=3,
                     width="100%",
                 ),
@@ -523,26 +793,43 @@ def _milestones_page() -> rx.Component:
             rx.hstack(
                 _choice_button("milestone_state", "open", "Open"),
                 _choice_button("milestone_state", "closed", "Closed"),
-                rx.button("Add to queue", on_click=AppState.queue_current_milestone, color_scheme="indigo"),
-                rx.button("Create current only", on_click=AppState.create_milestone_workflow, variant="ghost"),
+                rx.button(
+                    "Add to queue",
+                    on_click=AppState.queue_current_milestone,
+                    color_scheme="indigo",
+                ),
+                rx.button(
+                    "Create current only",
+                    on_click=AppState.create_milestone_workflow,
+                    variant="ghost",
+                ),
                 spacing="3",
             ),
             _labeled_field(
                 "Queued milestones",
                 rx.text_area(
                     value=AppState.milestone_queue_text,
-                    on_change=lambda value: AppState.set_workflow_field("milestone_queue_text", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "milestone_queue_text", value
+                    ),
                     min_rows=8,
                     width="100%",
                 ),
-                "One milestone per line. Format: title | due_on | state | description. "
-                "Shortcuts also support title only, title | description, title | due_on | description "
-                "(state defaults to open), or title | due_on | state.",
+                "One milestone per line using: title | due_on | state | description.",
             ),
             rx.hstack(
-                rx.button("Load defaults from env", on_click=AppState.load_default_milestones),
-                rx.button("Create queued milestones", on_click=AppState.create_queued_milestones_workflow, color_scheme="indigo"),
-                rx.button("Clear queue", on_click=AppState.clear_milestone_queue, variant="ghost", color_scheme="gray"),
+                rx.button(
+                    "Create queued milestones",
+                    on_click=AppState.create_queued_milestones_workflow,
+                    color_scheme="indigo",
+                ),
+                _secondary_actions_menu(
+                    "More",
+                    [
+                        ("Load defaults from env", AppState.load_default_milestones),
+                        ("Clear queue", AppState.clear_milestone_queue),
+                    ],
+                ),
                 spacing="3",
             ),
             _status_block("Queue/default status", AppState.milestone_defaults_status),
@@ -556,7 +843,9 @@ def _milestones_page() -> rx.Component:
                     "Repository",
                     rx.input(
                         value=AppState.milestone_list_repo,
-                        on_change=lambda value: AppState.set_workflow_field("milestone_list_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "milestone_list_repo", value
+                        ),
                         placeholder="owner/repo",
                         width="100%",
                     ),
@@ -569,7 +858,9 @@ def _milestones_page() -> rx.Component:
                 _choice_button("milestone_list_state", "open", "Open"),
                 _choice_button("milestone_list_state", "closed", "Closed"),
                 _choice_button("milestone_list_state", "all", "All"),
-                rx.button("List milestones", on_click=AppState.list_milestones_workflow),
+                rx.button(
+                    "List milestones", on_click=AppState.list_milestones_workflow
+                ),
                 spacing="3",
             ),
             _status_block("Milestones", AppState.milestone_list_output),
@@ -584,7 +875,9 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
                 "Title",
                 rx.input(
                     value=draft.title,
-                    on_change=lambda value: AppState.update_requirement_draft(value, idx, "title"),
+                    on_change=lambda value: AppState.update_requirement_draft(
+                        value, idx, "title"
+                    ),
                     width="100%",
                 ),
             ),
@@ -592,7 +885,9 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
                 "Body",
                 rx.text_area(
                     value=draft.body,
-                    on_change=lambda value: AppState.update_requirement_draft(value, idx, "body"),
+                    on_change=lambda value: AppState.update_requirement_draft(
+                        value, idx, "body"
+                    ),
                     min_rows=8,
                     width="100%",
                 ),
@@ -602,7 +897,9 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
                     "Labels",
                     rx.input(
                         value=draft.labels,
-                        on_change=lambda value: AppState.update_requirement_draft(value, idx, "labels"),
+                        on_change=lambda value: AppState.update_requirement_draft(
+                            value, idx, "labels"
+                        ),
                         placeholder="bug, enhancement",
                         width="100%",
                     ),
@@ -611,7 +908,9 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
                     "Assignees",
                     rx.input(
                         value=draft.assignees,
-                        on_change=lambda value: AppState.update_requirement_draft(value, idx, "assignees"),
+                        on_change=lambda value: AppState.update_requirement_draft(
+                            value, idx, "assignees"
+                        ),
                         placeholder="alice, bob",
                         width="100%",
                     ),
@@ -620,7 +919,9 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
                     "Milestone #",
                     rx.input(
                         value=draft.milestone,
-                        on_change=lambda value: AppState.update_requirement_draft(value, idx, "milestone"),
+                        on_change=lambda value: AppState.update_requirement_draft(
+                            value, idx, "milestone"
+                        ),
                         placeholder="1",
                         width="100%",
                     ),
@@ -639,7 +940,7 @@ def _draft_editor(draft: RequirementDraft, idx: rx.Var) -> rx.Component:
 def _requirements_page() -> rx.Component:
     return _page_shell(
         "Requirements to issues",
-        "Fetch requirements, generate issue drafts, edit them inline, and submit them from one page.",
+        "Load requirements, generate issue drafts, refine them, and submit without context switching.",
         _section_card(
             "Step 1 · Load requirements",
             "Pull a markdown file from GitHub or paste the source document directly.",
@@ -648,7 +949,9 @@ def _requirements_page() -> rx.Component:
                     "Repository",
                     rx.input(
                         value=AppState.requirements_repo,
-                        on_change=lambda value: AppState.set_workflow_field("requirements_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "requirements_repo", value
+                        ),
                         placeholder="owner/repo",
                         width="100%",
                     ),
@@ -661,14 +964,26 @@ def _requirements_page() -> rx.Component:
                 "Requirements path",
                 rx.input(
                     value=AppState.requirements_path,
-                    on_change=lambda value: AppState.set_workflow_field("requirements_path", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "requirements_path", value
+                    ),
                     placeholder="docs/requirements.md",
                     width="100%",
                 ),
             ),
             rx.hstack(
-                rx.button("Fetch from GitHub", on_click=AppState.fetch_requirements_text),
-                rx.button("Copy repo to submit target", on_click=AppState.sync_submit_repo_from_requirements, variant="ghost"),
+                rx.button(
+                    "Fetch from GitHub", on_click=AppState.fetch_requirements_text
+                ),
+                _secondary_actions_menu(
+                    "More",
+                    [
+                        (
+                            "Copy repo to submit target",
+                            AppState.sync_submit_repo_from_requirements,
+                        ),
+                    ],
+                ),
                 spacing="3",
             ),
             _status_block("Fetch status", AppState.requirements_fetch_status),
@@ -676,7 +991,9 @@ def _requirements_page() -> rx.Component:
                 "Requirements text",
                 rx.text_area(
                     value=AppState.requirements_text,
-                    on_change=lambda value: AppState.set_workflow_field("requirements_text", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "requirements_text", value
+                    ),
                     min_rows=12,
                     width="100%",
                 ),
@@ -693,21 +1010,45 @@ def _requirements_page() -> rx.Component:
                         "Milestone context disabled",
                     ),
                     size="2",
-                    variant=rx.cond(AppState.requirements_use_milestones, "solid", "outline"),
-                    color_scheme=rx.cond(AppState.requirements_use_milestones, "indigo", "gray"),
-                    on_click=AppState.toggle_workflow_flag("requirements_use_milestones"),
+                    variant=rx.cond(
+                        AppState.requirements_use_milestones, "solid", "outline"
+                    ),
+                    color_scheme=rx.cond(
+                        AppState.requirements_use_milestones, "indigo", "gray"
+                    ),
+                    on_click=AppState.toggle_workflow_flag(
+                        "requirements_use_milestones"
+                    ),
                 ),
-                rx.button("Load default milestones", on_click=AppState.load_default_milestones),
-                rx.button("Create queued milestones", on_click=AppState.seed_requirements_milestones),
-                rx.button("Parse requirements", on_click=AppState.parse_requirements_workflow, color_scheme="indigo"),
-                rx.button("Clear drafts", on_click=AppState.clear_requirement_drafts, variant="ghost", color_scheme="gray"),
+                rx.button(
+                    "Parse requirements",
+                    on_click=AppState.parse_requirements_workflow,
+                    color_scheme="indigo",
+                ),
+                _secondary_actions_menu(
+                    "More",
+                    [
+                        ("Load default milestones", AppState.load_default_milestones),
+                        (
+                            "Create queued milestones",
+                            AppState.seed_requirements_milestones,
+                        ),
+                        (
+                            "Use milestones for parsing",
+                            AppState.use_milestones_for_requirements,
+                        ),
+                        ("Clear drafts", AppState.clear_requirement_drafts),
+                    ],
+                ),
                 spacing="3",
             ),
             _labeled_field(
                 "Milestone queue",
                 rx.text_area(
                     value=AppState.milestone_queue_text,
-                    on_change=lambda value: AppState.set_workflow_field("milestone_queue_text", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "milestone_queue_text", value
+                    ),
                     min_rows=6,
                     width="100%",
                 ),
@@ -717,19 +1058,22 @@ def _requirements_page() -> rx.Component:
                 "Milestones repo",
                 rx.input(
                     value=AppState.requirements_milestones_repo,
-                    on_change=lambda value: AppState.set_workflow_field("requirements_milestones_repo", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "requirements_milestones_repo", value
+                    ),
                     placeholder="owner/repo",
                     width="100%",
                 ),
                 "Leave blank to reuse the requirements repository.",
             ),
-            rx.button("Use milestones for parsing", on_click=AppState.use_milestones_for_requirements, variant="ghost"),
-            _status_block("Milestone seed status", AppState.requirements_milestone_status),
+            _status_block(
+                "Milestone seed status", AppState.requirements_milestone_status
+            ),
             _status_block("Parse status", AppState.requirements_status),
         ),
         _section_card(
             "Step 3 · Review drafts",
-            "Edit the generated drafts before you push them to GitHub.",
+            "Review and adjust drafts before publishing them to GitHub.",
             rx.cond(
                 AppState.requirement_drafts.length() > 0,
                 rx.vstack(
@@ -738,7 +1082,10 @@ def _requirements_page() -> rx.Component:
                     width="100%",
                 ),
                 rx.box(
-                    rx.text("No drafts yet. Parse requirements to generate editable issue drafts.", color_scheme="gray"),
+                    rx.text(
+                        "No drafts yet. Parse requirements to generate editable issue drafts.",
+                        color_scheme="gray",
+                    ),
                     width="100%",
                     background_color="white",
                     border=f"1px dashed {rx.color('gray', 5)}",
@@ -755,7 +1102,9 @@ def _requirements_page() -> rx.Component:
                     "Submit repository",
                     rx.input(
                         value=AppState.submit_repo,
-                        on_change=lambda value: AppState.set_workflow_field("submit_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "submit_repo", value
+                        ),
                         placeholder="owner/repo",
                         width="100%",
                     ),
@@ -768,18 +1117,24 @@ def _requirements_page() -> rx.Component:
                 "Milestone override",
                 rx.input(
                     value=AppState.submit_milestone_override,
-                    on_change=lambda value: AppState.set_workflow_field("submit_milestone_override", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "submit_milestone_override", value
+                    ),
                     placeholder="Optional milestone number",
                     width="100%",
                 ),
             ),
             rx.hstack(
-                rx.button("Submit issues", on_click=AppState.submit_requirement_drafts, color_scheme="indigo"),
                 rx.button(
-                    "List open issues",
-                    on_click=AppState.list_submit_open_issues_workflow,
-                    variant="soft",
-                    color_scheme="gray",
+                    "Submit issues",
+                    on_click=AppState.submit_requirement_drafts,
+                    color_scheme="indigo",
+                ),
+                _secondary_actions_menu(
+                    "More",
+                    [
+                        ("List open issues", AppState.list_submit_open_issues_workflow),
+                    ],
                 ),
                 spacing="3",
             ),
@@ -793,7 +1148,7 @@ def _requirements_page() -> rx.Component:
 def _servicenow_page() -> rx.Component:
     return _page_shell(
         "ServiceNow sync",
-        "Run the GitHub source-of-truth sync with the same credentials used by the agent.",
+        "Sync GitHub data to ServiceNow using the same workspace credentials.",
         _section_card(
             "Sync controls",
             "Use the shared ServiceNow settings and choose whether to preview or apply the sync.",
@@ -802,7 +1157,9 @@ def _servicenow_page() -> rx.Component:
                     "Repository",
                     rx.input(
                         value=AppState.sync_repo,
-                        on_change=lambda value: AppState.set_workflow_field("sync_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "sync_repo", value
+                        ),
                         placeholder="owner/repo",
                         width="100%",
                     ),
@@ -813,20 +1170,28 @@ def _servicenow_page() -> rx.Component:
             ),
             rx.hstack(
                 rx.button(
-                    rx.cond(AppState.sync_dry_run, "Dry run enabled", "Apply mode enabled"),
+                    rx.cond(
+                        AppState.sync_dry_run, "Dry run enabled", "Apply mode enabled"
+                    ),
                     size="2",
                     variant=rx.cond(AppState.sync_dry_run, "solid", "outline"),
                     color_scheme=rx.cond(AppState.sync_dry_run, "indigo", "gray"),
                     on_click=AppState.toggle_workflow_flag("sync_dry_run"),
                 ),
-                rx.button("Run sync", on_click=AppState.run_servicenow_sync, color_scheme="indigo"),
+                rx.button(
+                    "Run sync",
+                    on_click=AppState.run_servicenow_sync,
+                    color_scheme="indigo",
+                ),
                 spacing="3",
             ),
             _labeled_field(
                 "Back-sync allowlist",
                 rx.input(
                     value=AppState.sync_back_sync_fields,
-                    on_change=lambda value: AppState.set_workflow_field("sync_back_sync_fields", value),
+                    on_change=lambda value: AppState.set_workflow_field(
+                        "sync_back_sync_fields", value
+                    ),
                     placeholder="labels,assignees",
                     width="100%",
                 ),
@@ -840,7 +1205,7 @@ def _servicenow_page() -> rx.Component:
 def _agile_page() -> rx.Component:
     return _page_shell(
         "Agile planner",
-        "Generate dependency-aware sprint plans, read project status boards, and apply approved updates.",
+        "Plan dependency-aware sprints, review board status, and apply approved updates.",
         _section_card(
             "Planning inputs",
             "Point the planner at a repository or owner and tune the sprint configuration.",
@@ -849,7 +1214,9 @@ def _agile_page() -> rx.Component:
                     "Repository or owner",
                     rx.input(
                         value=AppState.agile_repo,
-                        on_change=lambda value: AppState.set_workflow_field("agile_repo", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_repo", value
+                        ),
                         placeholder="owner/repo or owner/*",
                         width="100%",
                     ),
@@ -863,7 +1230,9 @@ def _agile_page() -> rx.Component:
                     "Sprint capacity",
                     rx.input(
                         value=AppState.agile_capacity,
-                        on_change=lambda value: AppState.set_workflow_field("agile_capacity", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_capacity", value
+                        ),
                         placeholder="10",
                         width="100%",
                     ),
@@ -872,7 +1241,9 @@ def _agile_page() -> rx.Component:
                     "Number of sprints",
                     rx.input(
                         value=AppState.agile_sprints,
-                        on_change=lambda value: AppState.set_workflow_field("agile_sprints", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_sprints", value
+                        ),
                         placeholder="3",
                         width="100%",
                     ),
@@ -880,9 +1251,21 @@ def _agile_page() -> rx.Component:
                 width="100%",
             ),
             rx.hstack(
-                rx.button("Generate sprint plan", on_click=AppState.run_agile_workflow, color_scheme="indigo"),
-                rx.button("Apply relationships", on_click=AppState.apply_agile_relationships_workflow),
-                rx.button("Apply labels", on_click=AppState.apply_agile_labels_workflow),
+                rx.button(
+                    "Generate sprint plan",
+                    on_click=AppState.run_agile_workflow,
+                    color_scheme="indigo",
+                ),
+                _secondary_actions_menu(
+                    "More",
+                    [
+                        (
+                            "Apply relationships",
+                            AppState.apply_agile_relationships_workflow,
+                        ),
+                        ("Apply labels", AppState.apply_agile_labels_workflow),
+                    ],
+                ),
                 spacing="3",
             ),
             _status_block("Planning status", AppState.agile_status),
@@ -896,7 +1279,9 @@ def _agile_page() -> rx.Component:
                     "Project number",
                     rx.input(
                         value=AppState.agile_project_number,
-                        on_change=lambda value: AppState.set_workflow_field("agile_project_number", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_project_number", value
+                        ),
                         placeholder="12",
                         width="100%",
                     ),
@@ -905,7 +1290,9 @@ def _agile_page() -> rx.Component:
                     "Status field",
                     rx.input(
                         value=AppState.agile_project_status_field,
-                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_field", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_project_status_field", value
+                        ),
                         placeholder="Status",
                         width="100%",
                     ),
@@ -914,7 +1301,9 @@ def _agile_page() -> rx.Component:
                     "Sprint # filter (optional)",
                     rx.input(
                         value=AppState.agile_project_sprint_number,
-                        on_change=lambda value: AppState.set_workflow_field("agile_project_sprint_number", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_project_sprint_number", value
+                        ),
                         placeholder="1",
                         width="100%",
                     ),
@@ -922,12 +1311,18 @@ def _agile_page() -> rx.Component:
                 width="100%",
             ),
             rx.hstack(
-                rx.button("Read board", on_click=AppState.read_agile_project_board_workflow, color_scheme="indigo"),
+                rx.button(
+                    "Read board",
+                    on_click=AppState.read_agile_project_board_workflow,
+                    color_scheme="indigo",
+                ),
                 _labeled_field(
                     "Issue/PR #",
                     rx.input(
                         value=AppState.agile_project_issue_number,
-                        on_change=lambda value: AppState.set_workflow_field("agile_project_issue_number", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_project_issue_number", value
+                        ),
                         placeholder="123",
                         width="160px",
                     ),
@@ -936,7 +1331,9 @@ def _agile_page() -> rx.Component:
                     "New status",
                     rx.input(
                         value=AppState.agile_project_status_value,
-                        on_change=lambda value: AppState.set_workflow_field("agile_project_status_value", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_project_status_value", value
+                        ),
                         placeholder="In Progress",
                         width="220px",
                     ),
@@ -957,15 +1354,15 @@ def _agile_page() -> rx.Component:
             "Repo and project context",
             "List repos and projects, create a project board if needed, and review open issues for sprint execution.",
             rx.hstack(
-                rx.button(
-                    "List owner repositories",
-                    on_click=AppState.list_agile_repositories_workflow,
-                    variant="soft",
-                ),
-                rx.button(
-                    "List projects",
-                    on_click=AppState.list_agile_projects_workflow,
-                    variant="soft",
+                _secondary_actions_menu(
+                    "Context actions",
+                    [
+                        (
+                            "List owner repositories",
+                            AppState.list_agile_repositories_workflow,
+                        ),
+                        ("List projects", AppState.list_agile_projects_workflow),
+                    ],
                 ),
                 spacing="3",
             ),
@@ -974,7 +1371,9 @@ def _agile_page() -> rx.Component:
                     "New project title",
                     rx.input(
                         value=AppState.agile_new_project_title,
-                        on_change=lambda value: AppState.set_workflow_field("agile_new_project_title", value),
+                        on_change=lambda value: AppState.set_workflow_field(
+                            "agile_new_project_title", value
+                        ),
                         placeholder="Sprint Board",
                         width="100%",
                     ),
@@ -1023,7 +1422,8 @@ app.add_page(_agile_page, route="/agile", on_load=AppState.on_load)
 
 def main() -> None:  # pragma: no cover
     """Launch the Reflex app via ``git-review-agent``."""
-    app_dir = os.path.dirname(__file__)
+    app_dir = os.path.dirname(os.path.dirname(__file__))
+    print(f"Launching agent app in {app_dir}...")
     subprocess.run(
         [sys.executable, "-m", "reflex", "run"],
         cwd=app_dir,

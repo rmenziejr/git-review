@@ -10,8 +10,8 @@ from urllib.parse import parse_qs, urlparse
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from git_review.agent_app import auth
-from git_review.agent_app.state import AppState
+from git_review.webapp.agent_app import auth
+from git_review.webapp.agent_app.state import AppState
 from git_review.config import AppSettings
 
 

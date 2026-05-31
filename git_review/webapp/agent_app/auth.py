@@ -15,8 +15,8 @@ import requests
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse, Response
 
-from ..config import AppSettings
-from ..github_client import GitHubClient
+from git_review.config import AppSettings
+from git_review.github_client import GitHubClient
 
 _STATE_LOCK = threading.Lock()
 _SESSION_LOCK = threading.Lock()

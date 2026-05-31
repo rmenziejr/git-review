@@ -33,6 +33,7 @@ except ImportError as _exc:  # pragma: no cover
 from .components.chat import chat_thread
 from .components.hitl_panel import hitl_panel
 from .components.settings import settings_panel
+from .auth import handle_github_oauth_callback, logout_session, start_github_oauth_login
 from .state import AppState, RequirementDraft
 
 _NAV_ITEMS = [
@@ -1418,6 +1419,9 @@ app.add_page(_milestones_page, route="/milestones", on_load=AppState.on_load)
 app.add_page(_requirements_page, route="/requirements", on_load=AppState.on_load)
 app.add_page(_servicenow_page, route="/servicenow", on_load=AppState.on_load)
 app.add_page(_agile_page, route="/agile", on_load=AppState.on_load)
+app._api.add_route("/auth/github/login", start_github_oauth_login, methods=["GET"])
+app._api.add_route("/auth/github/callback", handle_github_oauth_callback, methods=["GET"])
+app._api.add_route("/auth/github/logout", logout_session, methods=["GET"])
 
 
 def main() -> None:  # pragma: no cover

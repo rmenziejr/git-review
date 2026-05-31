@@ -937,6 +937,56 @@ def test_create_issue_without_milestone_omits_field() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GitHubClient issue/PR comments
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_create_issue_comment_posts_and_returns_response() -> None:
+    response_payload = {
+        "id": 101,
+        "html_url": "https://github.com/acme/app/issues/4#issuecomment-101",
+        "body": "Investigating now",
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/issues/4/comments",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_issue_comment("acme", "app", 4, "Investigating now")
+
+    assert result["id"] == 101
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body == {"body": "Investigating now"}
+
+
+@responses_lib.activate
+def test_create_pull_request_comment_posts_to_issue_comments_endpoint() -> None:
+    response_payload = {
+        "id": 202,
+        "html_url": "https://github.com/acme/app/pull/7#issuecomment-202",
+        "body": "Linked to issue #99",
+    }
+    responses_lib.add(
+        responses_lib.POST,
+        f"{BASE}/repos/acme/app/issues/7/comments",
+        json=response_payload,
+        status=201,
+    )
+
+    client = GitHubClient(token="ghp_fake")
+    result = client.create_pull_request_comment("acme", "app", 7, "Linked to issue #99")
+
+    assert result["id"] == 202
+    import json as _json
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body == {"body": "Linked to issue #99"}
+
+
+# ---------------------------------------------------------------------------
 # GitHubClient.create_milestone
 # ---------------------------------------------------------------------------
 
@@ -1173,6 +1223,56 @@ def test_get_file_content_strips_leading_slash_from_path() -> None:
     # Leading slash should be stripped silently
     result = client.get_file_content("acme", "app", "/docs/requirements.md")
     assert result == content
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient branch/PR inspection helpers
+# ---------------------------------------------------------------------------
+
+@responses_lib.activate
+def test_compare_branches_returns_compare_payload() -> None:
+    payload = {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "total_commits": 1,
+        "files": [{"filename": "README.md", "status": "modified"}],
+        "commits": [{"sha": "abc123"}],
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/compare/main...feature-x",
+        json=payload,
+        status=200,
+    )
+
+    client = GitHubClient()
+    result = client.compare_branches("acme", "app", "main", "feature-x")
+
+    assert result["status"] == "ahead"
+    assert result["files"][0]["filename"] == "README.md"
+
+
+@responses_lib.activate
+def test_get_pull_request_returns_payload() -> None:
+    payload = {
+        "number": 8,
+        "title": "feat: improve parser",
+        "base": {"ref": "main"},
+        "head": {"ref": "feature/parser"},
+    }
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE}/repos/acme/app/pulls/8",
+        json=payload,
+        status=200,
+    )
+
+    client = GitHubClient()
+    result = client.get_pull_request("acme", "app", 8)
+
+    assert result["number"] == 8
+    assert result["base"]["ref"] == "main"
 
 
 # ---------------------------------------------------------------------------

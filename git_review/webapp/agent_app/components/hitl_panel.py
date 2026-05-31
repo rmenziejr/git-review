@@ -13,7 +13,7 @@ def _single_approval(item: HITLRequest) -> rx.Component:
         rx.vstack(
             rx.hstack(
                 rx.icon("shield-alert", size=16, color=rx.color("amber", 10)),
-                rx.markdown(item.description, component_map={"p": lambda *c, **p: rx.text(*c, **p, size="2")}),
+                rx.text(item.description, white_space="pre-wrap", size="2"),
                 spacing="2",
                 align_items="center",
             ),
@@ -61,7 +61,10 @@ def _single_approval(item: HITLRequest) -> rx.Component:
         ),
         width="100%",
         border=f"1px solid {rx.color('amber', 6)}",
+        border_radius="12px",
         background_color=rx.color("amber", 2),
+        box_shadow="0 8px 22px rgba(137, 83, 14, 0.10)",
+        padding="0.2rem",
     )
 
 
@@ -73,7 +76,7 @@ def hitl_panel() -> rx.Component:
             rx.hstack(
                 rx.icon("shield-alert", size=18, color=rx.color("amber", 10)),
                 rx.text(
-                    "Action requires your approval",
+                    "Approval required before continuing",
                     size="3",
                     weight="bold",
                     color_scheme="amber",
@@ -82,10 +85,10 @@ def hitl_panel() -> rx.Component:
                 align_items="center",
             ),
             rx.foreach(AppState.pending_hitl, _single_approval),
-            spacing="3",
+            spacing="4",
             width="100%",
             padding="4",
-            border_radius="8px",
+            border_radius="12px",
             border=f"2px solid {rx.color('amber', 6)}",
             background_color=rx.color("amber", 2),
         ),

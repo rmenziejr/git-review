@@ -202,6 +202,16 @@ class GitHubClient:
         raw = self._paginate("user/orgs")
         return [item for item in raw if isinstance(item, dict)]
 
+    def compare_branches(
+        self,
+        owner: str,
+        repo: str,
+        base: str,
+        head: str,
+    ) -> dict:
+        """Compare two refs/branches and return raw GitHub compare payload."""
+        return self._get(f"repos/{owner}/{repo}/compare/{base}...{head}")
+
     def get_commits(
         self,
         owner: str,
@@ -829,6 +839,19 @@ class GitHubClient:
             updated_at=isoparse(updated_at_str) if updated_at_str else None,
         )
 
+    def create_issue_comment(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        body: str,
+    ) -> dict:
+        """Create a timeline comment on an issue and return the raw API response."""
+        return self._post(
+            f"repos/{owner}/{repo}/issues/{issue_number}/comments",
+            json={"body": body},
+        )
+
     def update_issue(
         self,
         owner: str,
@@ -919,6 +942,28 @@ class GitHubClient:
             "draft": draft,
         }
         return self._post(f"repos/{owner}/{repo}/pulls", json=payload)
+
+    def get_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        pull_number: int,
+    ) -> dict:
+        """Fetch a single pull request by number and return the raw API response."""
+        return self._get(f"repos/{owner}/{repo}/pulls/{pull_number}")
+
+    def create_pull_request_comment(
+        self,
+        owner: str,
+        repo: str,
+        pull_number: int,
+        body: str,
+    ) -> dict:
+        """Create a conversation comment on a pull request and return the raw API response."""
+        return self._post(
+            f"repos/{owner}/{repo}/issues/{pull_number}/comments",
+            json={"body": body},
+        )
 
     def update_pull_request(
         self,

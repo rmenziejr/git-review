@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,7 @@ from git_review.ui_workflows import (
     read_agile_project_board,
     run_agile_planner,
     submit_issues,
+    summarize_activity,
     update_agile_project_status,
 )
 
@@ -215,9 +217,83 @@ def test_run_agile_planner_formats_dependency_and_plan_markdown() -> None:
 
 
 def test_agent_app_imports_with_multi_page_shell() -> None:
-    from git_review.agent_app import agent_app
+    from git_review.webapp.agent_app import agent_app
 
     assert agent_app.app is not None
+
+
+def test_agent_app_state_models_are_reflex_object_vars() -> None:
+    from reflex_base.vars.base import can_use_in_object_var
+
+    from git_review.webapp.agent_app.state import ChatMessage, HITLRequest, RequirementDraft
+
+    assert can_use_in_object_var(ChatMessage)
+    assert can_use_in_object_var(HITLRequest)
+    assert can_use_in_object_var(RequirementDraft)
+
+
+def test_summarize_activity_single_repo_requires_owner_repo() -> None:
+    output, status = summarize_activity(
+        github_token="",
+        openai_key="",
+        model="gpt-4o-mini",
+        base_url="",
+        repo="acme",
+        days=7,
+        since_str="",
+        until_str="",
+        author="",
+        system_prompt="",
+        all_repos=False,
+    )
+
+    assert output == ""
+    assert "owner/repo" in status
+
+
+def test_summarize_activity_owner_mode_accepts_owner_only_before_key_check() -> None:
+    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        output, status = summarize_activity(
+            github_token="",
+            openai_key="",
+            model="gpt-4o-mini",
+            base_url="",
+            repo="acme",
+            days=7,
+            since_str="",
+            until_str="",
+            author="",
+            system_prompt="",
+            all_repos=True,
+        )
+
+    assert output == ""
+    assert "OpenAI API key" in status
+    assert "owner/repo" not in status
+
+
+def test_summarize_activity_owner_mode_strips_owner_repo_input() -> None:
+    mock_gh = MagicMock()
+    mock_gh.list_repos.return_value = []
+
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        output, status = summarize_activity(
+            github_token="ghp_test",
+            openai_key="sk-test",
+            model="gpt-4o-mini",
+            base_url="",
+            repo="acme/app",
+            days=7,
+            since_str="",
+            until_str="",
+            author="",
+            system_prompt="",
+            all_repos=True,
+        )
+
+    assert output == ""
+    assert "acme" in status
+    mock_gh.list_repos.assert_called_once_with("acme")
 
 
 def test_read_agile_project_board_formats_markdown() -> None:

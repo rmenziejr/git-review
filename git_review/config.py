@@ -23,8 +23,6 @@ You can also construct with explicit overrides (useful in tests)::
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -50,8 +48,11 @@ class AppSettings(BaseSettings):
     ``github_oauth_authorize_url`` ``GITHUB_OAUTH_AUTHORIZE_URL``
     ``github_oauth_token_url`` ``GITHUB_OAUTH_TOKEN_URL``
     ``github_oauth_callback_path`` ``GITHUB_OAUTH_CALLBACK_PATH``
+    ``agent_backend_url`` ``AGENT_BACKEND_URL``
+    ``agent_frontend_url`` ``AGENT_FRONTEND_URL``
     ``agent_session_cookie_name`` ``AGENT_SESSION_COOKIE_NAME``
     ``agent_session_ttl_seconds`` ``AGENT_SESSION_TTL_SECONDS``
+    ``agent_session_store_path`` ``AGENT_SESSION_STORE_PATH``
     ``agent_cookie_secure`` ``AGENT_COOKIE_SECURE``
     ``agent_cookie_samesite`` ``AGENT_COOKIE_SAMESITE``
     ``agent_user_settings_path`` ``AGENT_USER_SETTINGS_PATH``
@@ -127,6 +128,14 @@ class AppSettings(BaseSettings):
         default="/auth/github/callback",
         description="Callback path used by the OAuth flow.",
     )
+    agent_backend_url: str = Field(
+        default="http://localhost:3333",
+        description="Backend base URL used by frontend auth links.",
+    )
+    agent_frontend_url: str = Field(
+        default="http://localhost:3334",
+        description="Frontend base URL used after auth callbacks and logout.",
+    )
     agent_session_cookie_name: str = Field(
         default="git_review_session",
         description="Cookie name used to track authenticated agent sessions.",
@@ -134,6 +143,10 @@ class AppSettings(BaseSettings):
     agent_session_ttl_seconds: int = Field(
         default=28_800,
         description="Agent session lifetime in seconds.",
+    )
+    agent_session_store_path: str = Field(
+        default=".git-review-agent-sessions.json",
+        description="Server-side auth session store for the Reflex webapp.",
     )
     agent_cookie_secure: bool = Field(
         default=True,

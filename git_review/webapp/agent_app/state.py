@@ -10,16 +10,16 @@ State design
 
 Streaming flow
 --------------
-1.  ``send_message`` appends the user message, sets ``is_thinking=True``,
-    and ``yield``\\s to push the update to the browser immediately.
+1.  ``send_message`` appends the user message and an empty assistant message,
+    sets ``is_thinking=True``, and ``yield``\\s so the browser shows one
+    assistant bubble for the turn immediately.
 2.  It calls :func:`~git_review.agent.run_agent_streaming` and iterates
     ``stream_events()`` in an ``async for`` loop.
-3.  Answer text deltas are accumulated in ``streaming_text``; reasoning is
-    accumulated separately and attached to the completed assistant message.
-    Tool-call events are appended to ``messages``; each ``yield`` inside the
-    loop pushes the incremental update live.
-4.  After the stream ends the final assistant message is moved from
-    ``streaming_text`` into ``messages``.
+3.  Answer text, reasoning, and tool lifecycle events are accumulated on the
+    active assistant message; each ``yield`` inside the loop pushes the
+    incremental update live inside that same bubble.
+4.  After the stream ends the active assistant message is finalized and the
+    temporary stream buffers are cleared.
 5.  If ``result.interruptions`` is non-empty, the HITL details are stored
     in ``pending_hitl`` and the raw result is kept in ``_pending_result``.
 
@@ -38,6 +38,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlsplit
 
 import reflex as rx
 
@@ -73,7 +74,6 @@ from git_review.ui_workflows import (
 
 try:
     from agents.items import ToolApprovalItem
-    from agents.run import RunResultStreaming
     from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 except ImportError:  # pragma: no cover
     pass
@@ -165,9 +165,14 @@ class AppState(rx.State):
     github_login: str = ""
     github_name: str = ""
     github_orgs: str = ""
+    github_scopes: str = ""
     session_expires_at: str = ""
+    github_session_id: str = rx.Cookie(name="git_review_session_reflex")
+    active_session_id: str = ""
+    auth_prompt_open: bool = False
     openai_key: str = ""
     openai_base_url: str = ""
+    org_access_token: str = ""
     agent_model: str = "gpt-4o"
     owner: str = ""
     repo: str = ""
@@ -268,6 +273,11 @@ class AppState(rx.State):
         """Populate settings from environment / .env on first load."""
         settings = AppSettings()
         self._hydrate_auth_session(settings)
+        query_params = parse_qs(urlsplit(str(getattr(self.router, "url", "") or "")).query)
+        auth_param = query_params.get("auth", [""])[0]
+        self.auth_prompt_open = not self.authenticated
+        if auth_param == "signed-in" and self.authenticated:
+            self.auth_prompt_open = False
         if self.authenticated and not self.openai_key and settings.openai_api_key:
             self.openai_key = settings.openai_api_key
         if self.authenticated and not self.openai_base_url and settings.openai_base_url:
@@ -315,29 +325,57 @@ class AppState(rx.State):
                 self.requirements_milestones_repo = repo_value
 
     def _hydrate_auth_session(self, settings: AppSettings) -> None:
-        headers = getattr(self.router, "headers", None)
-        cookie_header = str(getattr(headers, "cookie", "") or "")
-        session = get_session_by_cookie(cookie_header, settings)
+        session = self._session_from_auth_sources(settings)
         if session is None:
             self.authenticated = False
             self.auth_status = "Sign in with GitHub to enable workflow actions."
             self.github_login = ""
             self.github_name = ""
             self.github_orgs = ""
+            self.github_scopes = ""
             self.session_expires_at = ""
             self._github_token = ""
             self._github_user_id = ""
+            self.active_session_id = ""
             self.openai_key = ""
             self.openai_base_url = ""
+            self.org_access_token = ""
+            self.auth_prompt_open = True
             return
+        self._apply_auth_session(session, settings)
+        self.auth_prompt_open = False
+
+    def _session_from_auth_sources(self, settings: AppSettings) -> Any:
+        headers = getattr(self.router, "headers", None)
+        cookie_header = str(getattr(headers, "cookie", "") or "")
+        session = get_session_by_cookie(cookie_header, settings)
+        if session is not None:
+            return session
+        if self.active_session_id:
+            session = get_session_by_cookie(
+                f"{settings.agent_session_cookie_name}={self.active_session_id}",
+                settings,
+            )
+            if session is not None:
+                return session
+        if self.github_session_id:
+            return get_session_by_cookie(
+                f"{settings.agent_session_cookie_name}={self.github_session_id}",
+                settings,
+            )
+        return None
+
+    def _apply_auth_session(self, session: Any, settings: AppSettings) -> None:
         self.authenticated = True
         self.auth_status = "Authenticated"
         self.github_login = session.github_login
         self.github_name = session.github_name
         self.github_orgs = ", ".join(session.github_orgs)
+        self.github_scopes = ", ".join(session.github_scopes)
         self.session_expires_at = session.expires_at.isoformat(timespec="seconds")
         self._github_token = session.github_token
         self._github_user_id = session.github_user_id
+        self.active_session_id = session.session_id
         persisted = load_user_model_settings(session.github_user_id, settings)
         if persisted.get("openai_key") is not None:
             self.openai_key = persisted.get("openai_key", "")
@@ -345,6 +383,8 @@ class AppState(rx.State):
             self.openai_base_url = persisted.get("openai_base_url", "")
         if persisted.get("agent_model") is not None:
             self.agent_model = persisted.get("agent_model", "")
+        if persisted.get("org_access_token") is not None:
+            self.org_access_token = persisted.get("org_access_token", "")
 
     # ------------------------------------------------------------------ #
     # Settings sidebar
@@ -352,6 +392,8 @@ class AppState(rx.State):
 
     def toggle_settings(self) -> None:
         self.settings_open = not self.settings_open
+        if self.settings_open:
+            self._hydrate_auth_session(AppSettings())
 
     def toggle_settings_section(self, section: str) -> None:
         section_name = section.strip().lower()
@@ -371,6 +413,10 @@ class AppState(rx.State):
 
     def set_agent_model(self, value: str) -> None:
         self.agent_model = value
+        self._persist_model_settings_if_authenticated()
+
+    def set_org_access_token(self, value: str) -> None:
+        self.org_access_token = value
         self._persist_model_settings_if_authenticated()
 
     def set_owner(self, value: str) -> None:
@@ -415,15 +461,27 @@ class AppState(rx.State):
                 "openai_key": self.openai_key,
                 "openai_base_url": self.openai_base_url,
                 "agent_model": self.agent_model,
+                "org_access_token": self.org_access_token,
             },
             AppSettings(),
         )
 
     def _require_github_token(self) -> Optional[str]:
+        org_token = self.org_access_token.strip()
+        if org_token:
+            return org_token
+
         token = self._github_token.strip()
         if token:
             return token
+
+        self._hydrate_auth_session(AppSettings())
+        token = self._github_token.strip()
+        if token:
+            return token
+
         self.auth_status = "❌ Sign in with GitHub to continue."
+        self.auth_prompt_open = True
         return None
 
     # ------------------------------------------------------------------ #
@@ -938,6 +996,26 @@ class AppState(rx.State):
     def _append_reasoning(self, text: str) -> None:
         if text:
             self.reasoning_text += text
+            assistant = self._current_assistant_message()
+            if assistant is not None:
+                self._replace_current_assistant(
+                    replace(
+                        assistant,
+                        reasoning_text=f"{assistant.reasoning_text}{text}",
+                    )
+                )
+
+    def _append_streaming_text(self, text: str) -> None:
+        if text:
+            self.streaming_text += text
+            assistant = self._current_assistant_message()
+            if assistant is not None:
+                self._replace_current_assistant(
+                    replace(
+                        assistant,
+                        content=f"{assistant.content}{text}",
+                    )
+                )
 
     @staticmethod
     def _to_json_string(value: Any) -> str:
@@ -1114,7 +1192,7 @@ class AppState(rx.State):
         if isinstance(event, RawResponsesStreamEvent):
             event_type = getattr(event.data, "type", "")
             if event_type == "response.output_text.delta":
-                self.streaming_text += self._event_attr(event.data, "delta", "")
+                self._append_streaming_text(self._event_attr(event.data, "delta", ""))
                 return True
             if event_type == "response.reasoning_text.delta":
                 self._append_reasoning(self._event_attr(event.data, "delta", ""))
@@ -1156,7 +1234,7 @@ class AppState(rx.State):
         data = self._event_attr(event, "data", None)
 
         if event_type == "response.output_text.delta":
-            self.streaming_text += self._event_attr(data, "delta", "")
+            self._append_streaming_text(self._event_attr(data, "delta", ""))
             return True
 
         if event_type == "response.reasoning_text.delta":

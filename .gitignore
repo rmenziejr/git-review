@@ -14,6 +14,8 @@ build/
 venv/
 env/
 
+.env
+
 # pytest / coverage
 .pytest_cache/
 .coverage
@@ -33,3 +35,6 @@ vscode-extension/out/
 vscode-extension/node_modules/
 vscode-extension/.vscode-test/
 *.vsix
+
+# git-review webapp local session store
+.git-review-agent-sessions.json

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from git_review.config import AppSettings
@@ -21,7 +19,10 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_OAUTH_CLIENT_ID", raising=False)
     monkeypatch.delenv("GITHUB_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("GITHUB_OAUTH_SCOPES", raising=False)
+    monkeypatch.delenv("AGENT_BACKEND_URL", raising=False)
+    monkeypatch.delenv("AGENT_FRONTEND_URL", raising=False)
     monkeypatch.delenv("AGENT_SESSION_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("AGENT_SESSION_STORE_PATH", raising=False)
 
     settings = AppSettings()
 
@@ -36,7 +37,10 @@ def test_defaults_when_no_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.github_oauth_client_id == ""
     assert settings.github_oauth_client_secret == ""
     assert settings.github_oauth_scopes == "repo,read:user,read:org"
+    assert settings.agent_backend_url == "http://localhost:3333"
+    assert settings.agent_frontend_url == "http://localhost:3334"
     assert settings.agent_session_ttl_seconds == 28_800
+    assert settings.agent_session_store_path == ".git-review-agent-sessions.json"
 
 
 def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,7 +54,10 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_OAUTH_CLIENT_ID", "oauth-client-id")
     monkeypatch.setenv("GITHUB_OAUTH_CLIENT_SECRET", "oauth-client-secret")
     monkeypatch.setenv("GITHUB_OAUTH_SCOPES", "repo,read:user")
+    monkeypatch.setenv("AGENT_BACKEND_URL", "http://localhost:3333")
+    monkeypatch.setenv("AGENT_FRONTEND_URL", "http://localhost:3334")
     monkeypatch.setenv("AGENT_SESSION_TTL_SECONDS", "1200")
+    monkeypatch.setenv("AGENT_SESSION_STORE_PATH", "/tmp/git-review-sessions.json")
     monkeypatch.setenv(
         "DEFAULT_MILESTONES_JSON",
         '[{"title":"Backlog","description":"Shared roadmap"}]',
@@ -69,7 +76,10 @@ def test_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.github_oauth_client_id == "oauth-client-id"
     assert settings.github_oauth_client_secret == "oauth-client-secret"
     assert settings.github_oauth_scopes == "repo,read:user"
+    assert settings.agent_backend_url == "http://localhost:3333"
+    assert settings.agent_frontend_url == "http://localhost:3334"
     assert settings.agent_session_ttl_seconds == 1200
+    assert settings.agent_session_store_path == "/tmp/git-review-sessions.json"
 
 
 def test_explicit_construction_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:

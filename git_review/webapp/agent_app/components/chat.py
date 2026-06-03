@@ -94,7 +94,8 @@ def _reasoning_panel(text: str, thinking_complete: rx.Var | bool) -> rx.Componen
 
 def _assistant_bubble(msg: ChatMessage) -> rx.Component:
     has_content = (
-        (msg.content != "")
+        AppState.is_thinking
+        | (msg.content != "")
         | (msg.reasoning_text != "")
         | (msg.tool_events.length() > 0)
     )
@@ -104,19 +105,28 @@ def _assistant_bubble(msg: ChatMessage) -> rx.Component:
         rx.box(
             rx.box(
                 rx.vstack(
-                    rx.text(
-                        "AI",
-                        size="1",
-                        weight="bold",
-                        color=rx.color("blue", 10),
+                    rx.hstack(
+                        rx.text(
+                            "AI",
+                            size="1",
+                            weight="bold",
+                            color=rx.color("blue", 10),
+                        ),
+                        rx.cond(
+                            AppState.is_thinking & (msg.content == ""),
+                            rx.spinner(size="1", color="blue"),
+                            rx.fragment(),
+                        ),
+                        spacing="2",
+                        align_items="center",
                     ),
+                    _tools_panel(msg.tool_events),
                     _reasoning_panel(msg.reasoning_text, True),
                     rx.cond(
                         msg.content != "",
                         rx.markdown(msg.content),
                         rx.fragment(),
                     ),
-                    rx.foreach(msg.tool_events, _tool_event_item),
                     spacing="3",
                     width="100%",
                     align_items="start",
@@ -133,6 +143,36 @@ def _assistant_bubble(msg: ChatMessage) -> rx.Component:
             max_width=CHAT_LANE_MAX,
             margin_inline="auto",
             text_align="left",
+        ),
+        rx.fragment(),
+    )
+
+
+def _tools_panel(events: list[ToolEvent]) -> rx.Component:
+    return rx.cond(
+        events.length() > 0,
+        rx.accordion.root(
+            rx.accordion.item(
+                header=rx.hstack(
+                    rx.icon("wrench", size=14, color=rx.color("indigo", 10)),
+                    rx.text("Tools", size="1", weight="medium", color_scheme="indigo"),
+                    rx.badge(events.length(), size="1", color_scheme="indigo", variant="soft"),
+                    spacing="2",
+                    align_items="center",
+                    width="100%",
+                ),
+                content=rx.vstack(
+                    rx.foreach(events, _tool_event_item),
+                    spacing="2",
+                    width="100%",
+                    align_items="stretch",
+                    padding_top="2",
+                ),
+                value="tools",
+            ),
+            collapsible=True,
+            width="100%",
+            variant="ghost",
         ),
         rx.fragment(),
     )
@@ -308,8 +348,6 @@ def chat_thread() -> rx.Component:
     return rx.box(
         rx.vstack(
             rx.foreach(AppState.messages, _message_item),
-            _thinking_indicator(),
-            _streaming_bubble(),
             spacing="3",
             width="100%",
             padding_bottom="4",

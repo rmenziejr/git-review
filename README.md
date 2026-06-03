@@ -446,8 +446,11 @@ environment variables / `.env` entries:
 | `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth app client secret for token exchange | — |
 | `GITHUB_OAUTH_SCOPES` | OAuth scopes requested during sign-in (must include `read:user`) | `repo,read:user,read:org` |
 | `GITHUB_OAUTH_CALLBACK_PATH` | Callback path (or absolute URL) used by OAuth flow | `/auth/github/callback` |
+| `AGENT_BACKEND_URL` | Backend base URL used by frontend sign-in/sign-out links | `http://localhost:3333` |
+| `AGENT_FRONTEND_URL` | Frontend base URL used after auth callbacks and logout | `http://localhost:3334` |
 | `AGENT_SESSION_COOKIE_NAME` | Cookie name for authenticated agent sessions | `git_review_session` |
 | `AGENT_SESSION_TTL_SECONDS` | Session lifetime in seconds | `28800` |
+| `AGENT_SESSION_STORE_PATH` | Server-side OAuth session store path; contains GitHub tokens and should stay private | `.git-review-agent-sessions.json` |
 | `AGENT_COOKIE_SECURE` | Mark session cookie as `Secure` | `true` |
 | `AGENT_COOKIE_SAMESITE` | Session cookie SameSite policy | `lax` |
 | `AGENT_USER_SETTINGS_PATH` | JSON file path for per-user model settings persistence | `.git-review-agent-user-settings.json` |

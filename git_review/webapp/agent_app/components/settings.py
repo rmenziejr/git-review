@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import reflex as rx
 
+from git_review.config import AppSettings
+
 from ..state import AppState
 
 
@@ -12,6 +14,15 @@ PANEL_BORDER = "1px solid rgba(20, 53, 89, 0.12)"
 PANEL_SHADOW = "-10px 0 28px rgba(16, 35, 56, 0.14)"
 SECTION_BG = "rgba(255, 255, 255, 0.96)"
 SECTION_BORDER = "1px solid rgba(20, 53, 89, 0.09)"
+
+
+def _auth_href(path: str, settings: AppSettings | None = None) -> str:
+    """Build an absolute auth URL for the backend API."""
+    settings = settings or AppSettings()
+    base_url = settings.agent_backend_url.strip().rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{base_url}{path}"
 
 
 def _labeled_input(
@@ -139,14 +150,23 @@ def settings_panel() -> rx.Component:
                         "Credentials",
                         "credentials",
                         AppState.settings_credentials_open,
-                        rx.text(
-                            AppState.auth_status,
-                            size="2",
-                            color_scheme=rx.cond(AppState.authenticated, "green", "gray"),
-                        ),
                         rx.cond(
                             AppState.authenticated,
                             rx.vstack(
+                                rx.hstack(
+                                    rx.badge(
+                                        "Signed in",
+                                        color_scheme="green",
+                                        variant="soft",
+                                    ),
+                                    rx.text(
+                                        "@" + AppState.github_login,
+                                        size="1",
+                                        color_scheme="gray",
+                                    ),
+                                    spacing="2",
+                                    align_items="center",
+                                ),
                                 rx.text(
                                     rx.cond(
                                         AppState.github_name != "",
@@ -154,12 +174,21 @@ def settings_panel() -> rx.Component:
                                         AppState.github_login,
                                     ),
                                     size="2",
+                                    weight="medium",
                                 ),
-                                rx.text(AppState.github_login, size="1", color_scheme="gray"),
                                 rx.cond(
                                     AppState.github_orgs != "",
                                     rx.text(
                                         "Org access: " + AppState.github_orgs,
+                                        size="1",
+                                        color_scheme="gray",
+                                    ),
+                                    rx.fragment(),
+                                ),
+                                rx.cond(
+                                    AppState.github_scopes != "",
+                                    rx.text(
+                                        "Scopes: " + AppState.github_scopes,
                                         size="1",
                                         color_scheme="gray",
                                     ),
@@ -177,18 +206,25 @@ def settings_panel() -> rx.Component:
                                         variant="outline",
                                         color_scheme="gray",
                                     ),
-                                    href="/auth/github/logout",
+                                    href=_auth_href("/auth/github/logout"),
                                     underline="none",
                                 ),
                                 spacing="1",
                                 width="100%",
                                 align_items="start",
                             ),
-                            rx.link(
-                                rx.button("Sign in with GitHub", size="2", color_scheme="indigo"),
-                                href="/auth/github/login",
-                                underline="none",
+                            rx.text(
+                                "Sign in from the startup prompt to enable GitHub workflows.",
+                                size="1",
+                                color_scheme="gray",
                             ),
+                        ),
+                        _labeled_input(
+                            "ORG_ACCESS_TOKEN",
+                            AppState.org_access_token,
+                            AppState.set_org_access_token,
+                            placeholder="github_pat_...",
+                            password=True,
                         ),
                         _labeled_input(
                             "OpenAI API key",

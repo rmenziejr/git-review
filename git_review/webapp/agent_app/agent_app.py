@@ -32,8 +32,8 @@ except ImportError as _exc:  # pragma: no cover
 
 from .components.chat import chat_thread
 from .components.hitl_panel import hitl_panel
-from .components.settings import settings_panel
-from .auth import handle_github_oauth_callback, logout_session, start_github_oauth_login
+from .components.settings import _auth_href, settings_panel
+from .auth import auth_session_status, handle_github_oauth_callback, logout_session, start_github_oauth_login
 from .state import AppState, RequirementDraft
 
 _NAV_ITEMS = [
@@ -155,6 +155,34 @@ def _sidebar() -> rx.Component:
     )
 
 
+def _auth_prompt_modal() -> rx.Component:
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.dialog.title("Sign in with GitHub"),
+                rx.dialog.description(
+                    "Connect GitHub before using repository workflows.",
+                    color_scheme="gray",
+                ),
+                rx.link(
+                    rx.button(
+                        rx.icon("github", size=16),
+                        "Sign in with GitHub",
+                        color_scheme="indigo",
+                        size="3",
+                    ),
+                    href=_auth_href("/auth/github/login"),
+                    underline="none",
+                ),
+                spacing="4",
+                align_items="start",
+            ),
+            max_width="390px",
+        ),
+        open=AppState.auth_prompt_open,
+    )
+
+
 def _top_bar(*actions: rx.Component) -> rx.Component:
     return rx.box(
         rx.hstack(
@@ -261,6 +289,7 @@ def _page_shell(
             width="100%",
             align_items="start",
         ),
+        _auth_prompt_modal(),
         settings_panel(),
         width="100%",
         min_height="100vh",
@@ -1422,6 +1451,7 @@ app.add_page(_agile_page, route="/agile", on_load=AppState.on_load)
 app._api.add_route("/auth/github/login", start_github_oauth_login, methods=["GET"])
 app._api.add_route("/auth/github/callback", handle_github_oauth_callback, methods=["GET"])
 app._api.add_route("/auth/github/logout", logout_session, methods=["GET"])
+app._api.add_route("/auth/github/session", auth_session_status, methods=["GET"])
 
 
 def main() -> None:  # pragma: no cover

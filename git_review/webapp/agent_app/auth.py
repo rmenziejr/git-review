@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -13,17 +13,18 @@ from urllib.parse import urlencode, urlparse
 
 import requests
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, RedirectResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from git_review.config import AppSettings
 from git_review.github_client import GitHubClient
 
 _STATE_LOCK = threading.Lock()
-_SESSION_LOCK = threading.Lock()
+_SESSION_LOCK = threading.RLock()
 _SETTINGS_LOCK = threading.Lock()
 
 _OAUTH_STATE_TTL_SECONDS = 600
 _OAUTH_STATE_COOKIE = "git_review_oauth_state"
+_REFLEX_SESSION_COOKIE = "git_review_session_reflex"
 _MINIMUM_SCOPES = frozenset({"read:user"})
 
 _oauth_states: dict[str, datetime] = {}
@@ -41,6 +42,7 @@ class AuthSession:
     github_name: str
     github_orgs: list[str]
     expires_at: datetime
+    github_scopes: list[str] = field(default_factory=list)
 
     def is_expired(self, now: Optional[datetime] = None) -> bool:
         current = now or datetime.now(timezone.utc)
@@ -117,6 +119,114 @@ def _validate_oauth_settings(settings: AppSettings) -> Optional[Response]:
     return None
 
 
+def _frontend_redirect_url(settings: AppSettings, **query_params: str) -> str:
+    url = (settings.agent_frontend_url or "/").strip().rstrip("/") or "/"
+    query = urlencode({key: value for key, value in query_params.items() if value})
+    if not query:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{query}"
+
+
+def _session_store_path(settings: AppSettings) -> Path:
+    return Path(settings.agent_session_store_path).expanduser().resolve()
+
+
+def _auth_session_from_dict(payload: dict[str, Any]) -> Optional[AuthSession]:
+    try:
+        expires_at = _to_utc(datetime.fromisoformat(str(payload.get("expires_at") or "")))
+    except ValueError:
+        return None
+    orgs = payload.get("github_orgs", [])
+    if not isinstance(orgs, list):
+        orgs = []
+    scopes = payload.get("github_scopes", [])
+    if isinstance(scopes, str):
+        scopes = [item.strip() for item in scopes.split(",") if item.strip()]
+    if not isinstance(scopes, list):
+        scopes = []
+    session_id = str(payload.get("session_id") or "").strip()
+    github_token = str(payload.get("github_token") or "").strip()
+    github_user_id = str(payload.get("github_user_id") or "").strip()
+    github_login = str(payload.get("github_login") or "").strip()
+    if not session_id or not github_token or not github_login:
+        return None
+    return AuthSession(
+        session_id=session_id,
+        github_token=github_token,
+        github_user_id=github_user_id,
+        github_login=github_login,
+        github_name=str(payload.get("github_name") or github_login),
+        github_orgs=[str(item) for item in orgs if str(item).strip()],
+        expires_at=expires_at,
+        github_scopes=[str(item) for item in scopes if str(item).strip()],
+    )
+
+
+def _read_session_store(settings: AppSettings) -> dict[str, Any]:
+    path = _session_store_path(settings)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_session_store(settings: AppSettings, payload: dict[str, Any]) -> None:
+    path = _session_store_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.chmod(0o600)
+    tmp_path.replace(path)
+
+
+def save_auth_session(session: AuthSession, settings: Optional[AppSettings] = None) -> None:
+    """Persist an auth session so cookie lookup survives worker boundaries."""
+    settings = settings or AppSettings()
+    with _SESSION_LOCK:
+        _sessions[session.session_id] = session
+        payload = _read_session_store(settings)
+        payload[session.session_id] = session_as_dict(session)
+        _write_session_store(settings, payload)
+
+
+def load_auth_session(session_id: str, settings: Optional[AppSettings] = None) -> Optional[AuthSession]:
+    """Load a persisted auth session by id."""
+    settings = settings or AppSettings()
+    session_id = session_id.strip()
+    if not session_id:
+        return None
+    payload = _read_session_store(settings).get(session_id)
+    if not isinstance(payload, dict):
+        return None
+    session = _auth_session_from_dict(payload)
+    if session is None:
+        return None
+    if session.is_expired():
+        delete_auth_session(session_id, settings)
+        return None
+    with _SESSION_LOCK:
+        _sessions[session.session_id] = session
+    return session
+
+
+def delete_auth_session(session_id: str, settings: Optional[AppSettings] = None) -> None:
+    """Delete an auth session from memory and disk."""
+    settings = settings or AppSettings()
+    session_id = session_id.strip()
+    if not session_id:
+        return
+    with _SESSION_LOCK:
+        _sessions.pop(session_id, None)
+        payload = _read_session_store(settings)
+        if session_id in payload:
+            payload.pop(session_id, None)
+            _write_session_store(settings, payload)
+
+
 def start_github_oauth_login(request: Request, settings: Optional[AppSettings] = None) -> Response:
     """Start OAuth login by redirecting to GitHub authorize endpoint."""
     settings = settings or AppSettings()
@@ -152,7 +262,9 @@ def start_github_oauth_login(request: Request, settings: Optional[AppSettings] =
     return response
 
 
-def _exchange_code_for_token(code: str, request: Request, settings: AppSettings) -> str:
+def _exchange_code_for_token(
+    code: str, request: Request, settings: AppSettings
+) -> tuple[str, list[str]]:
     callback_url = _build_callback_url(request, settings)
     response = requests.post(
         settings.github_oauth_token_url,
@@ -170,10 +282,14 @@ def _exchange_code_for_token(code: str, request: Request, settings: AppSettings)
     token = str(payload.get("access_token") or "").strip()
     if not token:
         raise ValueError("GitHub OAuth token exchange did not return an access token.")
-    return token
+    raw_scope = str(payload.get("scope") or "").strip()
+    scopes = [item.strip() for item in raw_scope.split(",") if item.strip()]
+    return token, scopes
 
 
-def _build_auth_session(github_token: str, ttl_seconds: int) -> AuthSession:
+def _build_auth_session(
+    github_token: str, ttl_seconds: int, github_scopes: list[str] | None = None
+) -> AuthSession:
     gh = GitHubClient(token=github_token)
     user = gh.get_authenticated_user()
     orgs = gh.get_user_orgs()
@@ -192,6 +308,7 @@ def _build_auth_session(github_token: str, ttl_seconds: int) -> AuthSession:
             }
         ),
         expires_at=expires_at,
+        github_scopes=github_scopes or [],
     )
 
 
@@ -220,15 +337,20 @@ def handle_github_oauth_callback(request: Request, settings: Optional[AppSetting
         return PlainTextResponse("OAuth state expired. Please try signing in again.", status_code=400)
 
     try:
-        github_token = _exchange_code_for_token(code, request, settings)
-        session = _build_auth_session(github_token, settings.agent_session_ttl_seconds)
+        github_token, github_scopes = _exchange_code_for_token(code, request, settings)
+        session = _build_auth_session(
+            github_token, settings.agent_session_ttl_seconds, github_scopes
+        )
     except (requests.RequestException, ValueError) as exc:
         return PlainTextResponse(f"OAuth login failed: {exc}", status_code=400)
 
-    with _SESSION_LOCK:
-        _sessions[session.session_id] = session
+    save_auth_session(session, settings)
 
-    response = RedirectResponse(url="/", status_code=302)
+    response = RedirectResponse(
+        url=_frontend_redirect_url(settings, auth="signed-in"),
+        status_code=302,
+    )
+    cookie_max_age = max(settings.agent_session_ttl_seconds, 1)
     response.set_cookie(
         settings.agent_session_cookie_name,
         session.session_id,
@@ -236,7 +358,16 @@ def handle_github_oauth_callback(request: Request, settings: Optional[AppSetting
         secure=_cookie_secure_value(settings),
         samesite=_cookie_samesite_value(settings),
         path="/",
-        max_age=max(settings.agent_session_ttl_seconds, 1),
+        max_age=cookie_max_age,
+    )
+    response.set_cookie(
+        _REFLEX_SESSION_COOKIE,
+        session.session_id,
+        httponly=False,
+        secure=_cookie_secure_value(settings),
+        samesite=_cookie_samesite_value(settings),
+        path="/",
+        max_age=cookie_max_age,
     )
     response.delete_cookie(_OAUTH_STATE_COOKIE, path="/")
     return response
@@ -247,10 +378,10 @@ def logout_session(request: Request, settings: Optional[AppSettings] = None) -> 
     settings = settings or AppSettings()
     session_id = request.cookies.get(settings.agent_session_cookie_name, "")
     if session_id:
-        with _SESSION_LOCK:
-            _sessions.pop(session_id, None)
-    response = RedirectResponse(url="/", status_code=302)
+        delete_auth_session(session_id, settings)
+    response = RedirectResponse(url=_frontend_redirect_url(settings, auth="signed-out"), status_code=302)
     response.delete_cookie(settings.agent_session_cookie_name, path="/")
+    response.delete_cookie(_REFLEX_SESSION_COOKIE, path="/")
     response.delete_cookie(_OAUTH_STATE_COOKIE, path="/")
     return response
 
@@ -264,9 +395,27 @@ def get_session_by_cookie(cookie_header: str, settings: Optional[AppSettings] = 
     with _SESSION_LOCK:
         session = _sessions.get(session_id)
         if session and session.is_expired():
-            _sessions.pop(session_id, None)
+            delete_auth_session(session_id, settings)
             return None
-        return session
+        if session:
+            return session
+    return load_auth_session(session_id, settings)
+
+
+def auth_session_status(request: Request, settings: Optional[AppSettings] = None) -> Response:
+    """Return non-sensitive auth session state for browser debugging."""
+    settings = settings or AppSettings()
+    session_id = request.cookies.get(settings.agent_session_cookie_name, "")
+    session = get_session_by_cookie(request.headers.get("cookie", ""), settings)
+    return JSONResponse(
+        {
+            "cookie_present": bool(session_id),
+            "session_present": session is not None,
+            "github_login": session.github_login if session else "",
+            "github_scopes": session.github_scopes if session else [],
+            "session_expires_at": session.expires_at.isoformat() if session else "",
+        }
+    )
 
 
 def _settings_file_path(settings: AppSettings) -> Path:
@@ -290,7 +439,7 @@ def load_user_model_settings(user_id: str, settings: Optional[AppSettings] = Non
     if not isinstance(user_payload, dict):
         return {}
     result: dict[str, str] = {}
-    for key in ("openai_key", "openai_base_url", "agent_model"):
+    for key in ("openai_key", "openai_base_url", "agent_model", "org_access_token"):
         value = user_payload.get(key)
         if isinstance(value, str):
             result[key] = value
@@ -321,6 +470,7 @@ def save_user_model_settings(
             "openai_key": str(settings_payload.get("openai_key") or ""),
             "openai_base_url": str(settings_payload.get("openai_base_url") or ""),
             "agent_model": str(settings_payload.get("agent_model") or ""),
+            "org_access_token": str(settings_payload.get("org_access_token") or ""),
         }
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")

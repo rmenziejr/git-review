@@ -21,103 +21,85 @@ def _event_shell(*children: rx.Component, color: str) -> rx.Component:
 
 
 def tool_call_card(event: ToolEvent) -> rx.Component:
-    """Render a collapsible tool-call card."""
+    """Render a tool-call row inside the assistant Tools accordion."""
     return _event_shell(
-        rx.accordion.root(
-            rx.accordion.item(
-                header=rx.hstack(
-                    rx.icon("wrench", size=14, color=rx.color("indigo", 10)),
-                    rx.text(
-                        "Tool call", size="1", weight="medium", color_scheme="indigo"
-                    ),
-                    rx.code(event.tool_name, size="1", color=rx.color("indigo", 11)),
-                    spacing="2",
-                    align_items="center",
-                    width="100%",
+        rx.vstack(
+            rx.hstack(
+                rx.icon("wrench", size=14, color=rx.color("indigo", 10)),
+                rx.text(
+                    "Tool call", size="1", weight="medium", color_scheme="indigo"
                 ),
-                content=rx.box(
-                    rx.code_block(
-                        rx.cond(event.args_json != "", event.args_json, "{}"),
-                        language="json",
-                        font_size="0.75rem",
-                        width="100%",
-                    ),
-                    padding_top="2",
-                ),
-                value=event.id,
+                rx.code(event.tool_name, size="1", color=rx.color("indigo", 11)),
+                spacing="2",
+                align_items="center",
+                width="100%",
             ),
-            collapsible=True,
+            rx.code_block(
+                rx.cond(event.args_json != "", event.args_json, "{}"),
+                language="json",
+                font_size="0.75rem",
+                width="100%",
+            ),
+            spacing="2",
             width="100%",
-            variant="ghost",
+            align_items="start",
         ),
         color="indigo",
     )
 
 
 def tool_result_card(event: ToolEvent) -> rx.Component:
-    """Render a tool result card with optional error state."""
+    """Render a tool result row inside the assistant Tools accordion."""
     return rx.cond(
         event.is_error,
         _event_shell(
-            rx.accordion.root(
-                rx.accordion.item(
-                    header=rx.hstack(
-                        rx.icon("triangle-alert", size=14, color=rx.color("red", 10)),
-                        rx.text(
-                            "Tool error", size="1", weight="medium", color_scheme="red"
-                        ),
-                        rx.code(event.tool_name, size="1", color=rx.color("red", 11)),
-                        spacing="2",
-                        align_items="center",
-                        width="100%",
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("triangle-alert", size=14, color=rx.color("red", 10)),
+                    rx.text(
+                        "Tool error", size="1", weight="medium", color_scheme="red"
                     ),
-                    content=rx.box(
-                        rx.code_block(
-                            event.content,
-                            language="json",
-                            font_size="0.75rem",
-                            width="100%",
-                        ),
-                        padding_top="2",
-                    ),
-                    value=event.id,
+                    rx.code(event.tool_name, size="1", color=rx.color("red", 11)),
+                    spacing="2",
+                    align_items="center",
+                    width="100%",
                 ),
-                collapsible=True,
+                rx.code_block(
+                    event.content,
+                    language="json",
+                    font_size="0.75rem",
+                    width="100%",
+                ),
+                spacing="2",
                 width="100%",
-                variant="ghost",
+                align_items="start",
             ),
             color="red",
         ),
         _event_shell(
-            rx.accordion.root(
-                rx.accordion.item(
-                    header=rx.hstack(
-                        rx.icon("circle-check", size=14, color=rx.color("green", 10)),
-                        rx.text(
-                            "Tool result",
-                            size="1",
-                            weight="medium",
-                            color_scheme="green",
-                        ),
-                        rx.code(event.tool_name, size="1", color=rx.color("green", 11)),
-                        spacing="2",
-                        align_items="center",
-                        width="100%",
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("circle-check", size=14, color=rx.color("green", 10)),
+                    rx.text(
+                        "Tool result",
+                        size="1",
+                        weight="medium",
+                        color_scheme="green",
                     ),
-                    content=rx.box(
-                        rx.code_block(
-                            event.content,
-                            language="json",
-                            font_size="0.75rem",
-                            width="100%",
-                        ),
-                        padding_top="2",
-                    ),
-                    value=event.id,
+                    rx.code(event.tool_name, size="1", color=rx.color("green", 11)),
+                    spacing="2",
+                    align_items="center",
+                    width="100%",
                 ),
-                collapsible=True,
+                rx.code_block(
+                    event.content,
+                    language="json",
+                    font_size="0.75rem",
+                    width="100%",
+                ),
+                spacing="2",
                 width="100%",
-                variant="ghost",
+                align_items="start",
             ),
             color="green",
         ),

@@ -997,7 +997,7 @@ def _requirements_page() -> rx.Component:
                     on_change=lambda value: AppState.set_workflow_field(
                         "requirements_path", value
                     ),
-                    placeholder="docs/requirements.md",
+                    placeholder="REQUIREMENTS.md or docs/requirements.md",
                     width="100%",
                 ),
             ),

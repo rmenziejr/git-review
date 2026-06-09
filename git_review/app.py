@@ -45,11 +45,13 @@ GRADIO_SERVER_PORT
 from __future__ import annotations
 
 import logging
-import tempfile
 import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,16 @@ from .models import ReviewSummary
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _format_requirements_fetch_error(exc: Exception, owner: str, repo: str, path: str) -> str:
+    response = getattr(exc, "response", None)
+    if isinstance(exc, requests.HTTPError) and getattr(response, "status_code", None) == 404:
+        return (
+            f"❌  Could not find '{path}' in {owner}/{repo}; "
+            "check the case-sensitive file path, default branch, and GitHub token access."
+        )
+    return f"❌  Error fetching file: {exc}"
+
 
 def _make_clients(
     github_token: str,
@@ -487,7 +499,7 @@ def _fetch_requirements_from_repo(
     try:
         content = gh.get_file_content(owner, repo_name, path)
     except Exception as exc:
-        return "", f"❌  Error fetching file: {exc}"
+        return "", _format_requirements_fetch_error(exc, owner, repo_name, path)
     return content, f"✅  Fetched '{path}' from {owner}/{repo_name} ({len(content)} chars)."
 
 
@@ -1258,7 +1270,7 @@ def build_app() -> gr.Blocks:
                 with gr.Accordion("🔗 Fetch requirements from GitHub repo", open=False):
                     gr.Markdown(
                         "Enter the repository and the path to the requirements file "
-                        "(default: `docs/requirements.md`).  "
+                        "(default: `docs/requirements.md`; GitHub paths are case-sensitive).  "
                         "Click **Fetch** to load it into the text area below."
                     )
                     with gr.Row():
@@ -1269,7 +1281,7 @@ def build_app() -> gr.Blocks:
                         fetch_path = gr.Textbox(
                             label="File path in repo",
                             value="docs/requirements.md",
-                            placeholder="docs/requirements.md",
+                            placeholder="REQUIREMENTS.md or docs/requirements.md",
                         )
                     fetch_btn = gr.Button("Fetch from GitHub")
                     fetch_status = gr.Textbox(label="Fetch status", interactive=False)

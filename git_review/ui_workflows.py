@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import requests
+
 from .agile_planner import AgilePlanner
 from .agile_planner import resolve_agile_target as _resolve_agile_target_from_input
 from .github_client import GitHubClient
@@ -24,6 +26,16 @@ from .github_source_sync import (
 from .issue_factory import IssueDraft, IssueFactory
 from .llm_client import LLMClient
 from .models import ReviewSummary
+
+
+def _format_requirements_fetch_error(exc: Exception, owner: str, repo: str, path: str) -> str:
+    response = getattr(exc, "response", None)
+    if isinstance(exc, requests.HTTPError) and getattr(response, "status_code", None) == 404:
+        return (
+            f"❌  Could not find '{path}' in {owner}/{repo}; "
+            "check the case-sensitive file path, default branch, and GitHub token access."
+        )
+    return f"❌  Error fetching file: {exc}"
 
 
 def _make_clients(
@@ -615,7 +627,7 @@ def fetch_requirements_from_repo(
     try:
         content = gh.get_file_content(owner, repo_name, path)
     except Exception as exc:
-        return "", f"❌  Error fetching file: {exc}"
+        return "", _format_requirements_fetch_error(exc, owner, repo_name, path)
     return content, f"✅  Fetched '{path}' from {owner}/{repo_name} ({len(content)} chars)."
 
 

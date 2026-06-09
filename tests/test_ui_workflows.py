@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from git_review.issue_factory import IssueDraft
 from git_review.models import AgilePlanResult, Issue, IssueDependency, PullRequest, SprintRecommendation
 from git_review.ui_workflows import (
@@ -51,6 +53,23 @@ def test_fetch_requirements_from_repo_returns_content() -> None:
     assert content == "# Requirements"
     assert "Fetched 'docs/requirements.md' from acme/app" in status
     mock_gh.get_file_content.assert_called_once_with("acme", "app", "docs/requirements.md")
+
+
+def test_fetch_requirements_from_repo_explains_not_found() -> None:
+    mock_gh = MagicMock()
+    response = requests.Response()
+    response.status_code = 404
+    response.url = "https://api.github.com/repos/acme/app/contents/docs/requirements.md"
+    mock_gh.get_file_content.side_effect = requests.HTTPError(
+        "404 Client Error: Not Found for url", response=response
+    )
+
+    with patch("git_review.ui_workflows.GitHubClient", return_value=mock_gh):
+        content, status = fetch_requirements_from_repo("ghp_test", "acme/app", "docs/requirements.md")
+
+    assert content == ""
+    assert "Could not find 'docs/requirements.md' in acme/app" in status
+    assert "check the case-sensitive file path, default branch, and GitHub token access" in status
 
 
 def test_parse_requirements_returns_editable_rows() -> None:

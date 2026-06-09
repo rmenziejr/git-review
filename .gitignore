@@ -38,3 +38,4 @@ vscode-extension/.vscode-test/
 
 # git-review webapp local session store
 .git-review-agent-sessions.json
+.git-review-agent-user-settings.json

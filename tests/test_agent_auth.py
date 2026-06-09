@@ -331,6 +331,16 @@ def test_require_github_token_falls_back_to_oauth_token_without_org_token() -> N
     assert state._require_github_token() == "gho_oauth"
 
 
+def test_agent_context_uses_org_access_token_when_present() -> None:
+    state = AppState(_reflex_internal_init=True)
+    state._github_token = "gho_oauth"
+    state.org_access_token = "gho_org_access"
+
+    ctx = state._make_ctx()
+
+    assert ctx.github_token == "gho_org_access"
+
+
 
 def test_require_github_token_uses_active_session_id_after_cookie_hydration() -> None:
     auth._sessions.clear()

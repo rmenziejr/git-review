@@ -976,7 +976,7 @@ class AppState(rx.State):
         return AgentContext(
             owner=self.owner,
             repo=self.repo,
-            github_token=self._github_token,
+            github_token=self._require_github_token() or "",
             openai_api_key=self.openai_key,
             openai_base_url=self.openai_base_url,
             model=self.agent_model,
